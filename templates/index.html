@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DRC Online - Premeir System Engineering</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <button class="menu-toggle" id="menuToggle">☰</button>
+            <h1 class="header-title">DRC Online</h1>
+            <span class="company-name">Premeir System Engineering Co.ltd</span>
+        </div>
+        <div class="header-right">
+            <div class="status-indicator" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+            <div class="header-info">
+                <span id="currentTime">--:--:--</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>Control Panel</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-page="dashboard">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-page="settings">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-text">Settings</span>
+            </a>
+            <a href="#" class="nav-item" data-page="data">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">Data View</span>
+            </a>
+        </nav>
+        
+        <div class="sidebar-controls">
+            <h3>Sweep Control</h3>
+            <button class="btn btn-success" id="startBtn">▶ Start Sweep</button>
+            <button class="btn btn-danger" id="stopBtn" disabled>⏹ Stop Sweep</button>
+            
+            <div class="config-info">
+                <h3>Configuration</h3>
+                <div class="config-item">
+                    <span class="config-label">Port:</span>
+                    <span class="config-value" id="configPort">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Frequency:</span>
+                    <span class="config-value" id="configFreq">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Points:</span>
+                    <span class="config-value" id="configPoints">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Interval:</span>
+                    <span class="config-value" id="configInterval">--</span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+        <!-- Dashboard Page -->
+        <div class="page active" id="dashboardPage">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📡</div>
+                    <div class="stat-info">
+                        <div class="stat-label">Sweep Count</div>
+                        <div class="stat-value" id="sweepCount">0</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-info">
+                        <div class="stat-label">Avg S11 (dB)</div>
+                        <div class="stat-value" id="avgDb">--</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📈</div>
+                    <div class="stat-info">
+                        <div class="stat-label">Max S11 (dB)</div>
+                        <div class="stat-value" id="maxDb">--</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📉</div>
+                    <div class="stat-info">
+                        <div class="stat-label">Min S11 (dB)</div>
+                        <div class="stat-value" id="minDb">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>S11 Magnitude (dB) vs Frequency</h3>
+                        <span class="chart-subtitle" id="lastUpdate">Last update: --</span>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="dbChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>S22 Magnitude (dB) vs Frequency</h3>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="s22Chart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>S11 Phase vs Frequency</h3>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="phaseChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div class="page" id="settingsPage">
+            <div class="content-card">
+                <h2>Settings</h2>
+                <p>Configuration settings will be available here.</p>
+            </div>
+        </div>
+
+        <!-- Data Page -->
+        <div class="page" id="dataPage">
+            <div class="content-card">
+                <h2>Data View</h2>
+                <div class="data-table-wrapper">
+                    <table class="data-table" id="dataTable">
+                        <thead>
+                            <tr>
+                                <th>Frequency (GHz)</th>
+                                <th>Magnitude</th>
+                                <th>dB</th>
+                                <th>Phase (°)</th>
+                                <th>Real</th>
+                                <th>Imaginary</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody">
+                            <tr>
+                                <td colspan="6" class="no-data">No data available</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
