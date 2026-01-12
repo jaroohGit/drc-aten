@@ -23,7 +23,7 @@ BAUDRATE = 115200
 START_FREQ = 0.9e9   # 0.9 GHz (900 MHz)
 STOP_FREQ = 0.95e9   # 0.95 GHz (950 MHz)
 POINTS = 101
-INTERVAL = 0.2  # seconds (200 ms)
+INTERVAL = 1.0  # seconds (1000 ms)
 
 # Global variables
 is_running = False
@@ -70,33 +70,51 @@ def sweep_loop():
             # Perform scan
             cmd = f"scan {int(START_FREQ)} {int(STOP_FREQ)} {POINTS}"
             ser.write(f"{cmd}\r\n".encode())
-            time.sleep(0.1)  # Reduced for faster updates
+            time.sleep(0.5)  # Wait for scan to complete
             ser.read(ser.in_waiting)
             
-            # Get S11 data
-            ser.write(b"data 0\r\n")
-            time.sleep(0.05)  # Reduced for faster updates
+            # Get S11 data with retry until we get all points
+            response_s11 = ""
+            for attempt in range(3):  # Try up to 3 times
+                ser.write(b"data 0\r\n")
+                time.sleep(0.5)  # Wait for data
+                
+                response_s11 = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+                lines_s11 = [l.strip() for l in response_s11.split('\n') 
+                         if l.strip() and not l.strip().startswith('ch>') 
+                         and not l.strip().startswith('data')]
+                
+                if len(lines_s11) >= POINTS:
+                    break  # Got all points
+                    
+                print(f"S11: Attempt {attempt + 1}, got {len(lines_s11)}/{POINTS} points, retrying...")
+                time.sleep(0.2)  # Short delay before retry
             
-            response_s11 = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+            print(f"\n[S11 Response - {timestamp}] - {len(lines_s11)} points")
             
-            # Get S22 data
-            ser.write(b"data 1\r\n")
-            time.sleep(0.05)
+            # Get S21 data with retry until we get all points
+            response_s21 = ""
+            for attempt in range(3):  # Try up to 3 times
+                ser.write(b"data 1\r\n")
+                time.sleep(0.5)  # Wait for data
+                
+                response_s21 = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+                lines_s21 = [l.strip() for l in response_s21.split('\n') 
+                         if l.strip() and not l.strip().startswith('ch>') 
+                         and not l.strip().startswith('data')]
+                
+                if len(lines_s21) >= POINTS:
+                    break  # Got all points
+                    
+                print(f"S21: Attempt {attempt + 1}, got {len(lines_s21)}/{POINTS} points, retrying...")
+                time.sleep(0.2)  # Short delay before retry
             
-            response_s22 = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
+            print(f"[S21 Response - {timestamp}] - {len(lines_s21)} points")
             
             # Parse S11 data points
-            lines_s11 = [l.strip() for l in response_s11.split('\n') 
-                     if l.strip() and not l.strip().startswith('ch>') 
-                     and not l.strip().startswith('data')]
-            
-            # Parse S22 data points
-            lines_s22 = [l.strip() for l in response_s22.split('\n') 
-                     if l.strip() and not l.strip().startswith('ch>') 
-                     and not l.strip().startswith('data')]
             
             s11_data = []
-            s22_data = []
+            s21_data = []
             frequencies = []
             
             for i, line in enumerate(lines_s11[:POINTS]):
@@ -123,8 +141,8 @@ def sweep_loop():
                     except (ValueError, ZeroDivisionError):
                         continue
             
-            # Parse S22 data
-            for i, line in enumerate(lines_s22[:POINTS]):
+            # Parse S21 data
+            for i, line in enumerate(lines_s21[:POINTS]):
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
@@ -136,7 +154,7 @@ def sweep_loop():
                         
                         freq_ghz = START_FREQ/1e9 + (i * (STOP_FREQ - START_FREQ) / (POINTS - 1)) / 1e9
                         
-                        s22_data.append({
+                        s21_data.append({
                             'frequency': freq_ghz,
                             'magnitude': magnitude,
                             'db': db,
@@ -148,23 +166,44 @@ def sweep_loop():
                         continue
             
             # Send data via WebSocket
-            if s11_data:
+            if s11_data and len(s11_data) == POINTS:
+                print(f"\n✓ อ่านค่าได้สำเร็จ - Sweep #{sweep_count} [{timestamp}]")
+                print(f"  S11: {len(s11_data)} points | S21: {len(s21_data)} points")
+                print(f"  S11 dB: Min={min(d['db'] for d in s11_data):.2f}, Max={max(d['db'] for d in s11_data):.2f}, Avg={sum(d['db'] for d in s11_data)/len(s11_data):.2f}")
+                if s21_data:
+                    print(f"  S21 dB: Min={min(d['db'] for d in s21_data):.2f}, Max={max(d['db'] for d in s21_data):.2f}, Avg={sum(d['db'] for d in s21_data)/len(s21_data):.2f}")
+                    print(f"\n  === S21 Data Details ===")
+                    # Show first 5 and last 5 data points
+                    print(f"  First 5 points:")
+                    for i in range(min(5, len(s21_data))):
+                        d = s21_data[i]
+                        print(f"    [{i}] Freq: {d['frequency']:.4f} GHz, dB: {d['db']:.2f}, Phase: {d['phase']:.2f}°")
+                    if len(s21_data) > 10:
+                        print(f"  ...")
+                    if len(s21_data) > 5:
+                        print(f"  Last 5 points:")
+                        for i in range(max(0, len(s21_data)-5), len(s21_data)):
+                            d = s21_data[i]
+                            print(f"    [{i}] Freq: {d['frequency']:.4f} GHz, dB: {d['db']:.2f}, Phase: {d['phase']:.2f}°")
+                
                 data = {
                     'timestamp': timestamp,
                     'sweep_count': sweep_count,
                     's11_data': s11_data,
-                    's22_data': s22_data,
+                    's21_data': s21_data,
                     'summary': {
                         'avg_db': sum(d['db'] for d in s11_data) / len(s11_data),
                         'max_db': max(d['db'] for d in s11_data),
                         'min_db': min(d['db'] for d in s11_data),
                         'avg_phase': sum(d['phase'] for d in s11_data) / len(s11_data),
-                        's22_avg_db': sum(d['db'] for d in s22_data) / len(s22_data) if s22_data else 0,
-                        's22_max_db': max(d['db'] for d in s22_data) if s22_data else 0,
-                        's22_min_db': min(d['db'] for d in s22_data) if s22_data else 0
+                        's21_avg_db': sum(d['db'] for d in s21_data) / len(s21_data) if s21_data else 0,
+                        's21_max_db': max(d['db'] for d in s21_data) if s21_data else 0,
+                        's21_min_db': min(d['db'] for d in s21_data) if s21_data else 0
                     }
                 }
                 socketio.emit('sweep_data', data)
+            else:
+                print(f"\n✗ ข้อมูลไม่ครบ - Sweep #{sweep_count} [{timestamp}]: S11={len(s11_data)}/{POINTS} จุด (ข้ามการแสดงผล)")
             
             time.sleep(INTERVAL)
             

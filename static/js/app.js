@@ -3,8 +3,7 @@ const socket = io();
 
 // Chart instances
 let dbChart = null;
-let phaseChart = null;
-let s22Chart = null;
+let s21Chart = null;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
@@ -46,13 +45,16 @@ function initializeCharts() {
                     title: {
                         display: true,
                         text: 'Frequency (GHz)'
-                    }
+                    },
+                    max: 0.95
                 },
                 y: {
                     title: {
                         display: true,
                         text: 'Magnitude (dB)'
-                    }
+                    },
+                    min: -50,
+                    max: 0
                 }
             },
             animation: {
@@ -61,56 +63,12 @@ function initializeCharts() {
         }
     });
 
-    const phaseCtx = document.getElementById('phaseChart').getContext('2d');
-    phaseChart = new Chart(phaseCtx, {
+    const s21Ctx = document.getElementById('s21Chart').getContext('2d');
+    s21Chart = new Chart(s21Ctx, {
         type: 'line',
         data: {
             datasets: [{
-                label: 'Phase (°)',
-                data: [],
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top'
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    title: {
-                        display: true,
-                        text: 'Frequency (GHz)'
-                    }
-                },
-                y: {
-                    title: {
-                        display: true,
-                        text: 'Phase (degrees)'
-                    }
-                }
-            },
-            animation: {
-                duration: 300
-            }
-        }
-    });
-
-    const s22Ctx = document.getElementById('s22Chart').getContext('2d');
-    s22Chart = new Chart(s22Ctx, {
-        type: 'line',
-        data: {
-            datasets: [{
-                label: 'S22 (dB)',
+                label: 'S21 (dB)',
                 data: [],
                 borderColor: '#f59e0b',
                 backgroundColor: 'rgba(245, 158, 11, 0.1)',
@@ -134,13 +92,16 @@ function initializeCharts() {
                     title: {
                         display: true,
                         text: 'Frequency (GHz)'
-                    }
+                    },
+                    max: 0.95
                 },
                 y: {
                     title: {
                         display: true,
                         text: 'Magnitude (dB)'
-                    }
+                    },
+                    min: -50,
+                    max: 0
                 }
             },
             animation: {
@@ -230,28 +191,55 @@ function updateDashboard(data) {
     document.getElementById('avgDb').textContent = data.summary.avg_db.toFixed(2);
     document.getElementById('maxDb').textContent = data.summary.max_db.toFixed(2);
     document.getElementById('minDb').textContent = data.summary.min_db.toFixed(2);
+    
+    // Find frequency at minimum S11
+    const minS11Point = data.s11_data.find(d => d.db === data.summary.min_db);
+    if (minS11Point) {
+        const freqMHz = (minS11Point.frequency * 1000).toFixed(2);
+        document.getElementById('minDbFreq').textContent = `@ ${freqMHz} MHz`;
+    }
+    
+    // Update S21 stats
+    if (data.summary.s21_avg_db !== undefined) {
+        document.getElementById('avgS21').textContent = data.summary.s21_avg_db.toFixed(2);
+        document.getElementById('maxS21').textContent = data.summary.s21_max_db.toFixed(2);
+        document.getElementById('minS21').textContent = data.summary.s21_min_db.toFixed(2);
+    }
+    
     document.getElementById('lastUpdate').textContent = `Last update: ${data.timestamp}`;
 }
 
 // Update charts with new data
 function updateCharts(data) {
-    const s11Points = data.s11_data.map(d => ({x: d.frequency, y: d.db}));
-    const phasePoints = data.s11_data.map(d => ({x: d.frequency, y: d.phase}));
-
-    // Update dB chart
-    dbChart.data.datasets[0].data = s11Points;
-    dbChart.update('none');
-
-    // Update phase chart
-    phaseChart.data.datasets[0].data = phasePoints;
-    phaseChart.update('none');
-
-    // Update S22 chart if data available
-    if (data.s22_data && data.s22_data.length > 0) {
-        const s22Points = data.s22_data.map(d => ({x: d.frequency, y: d.db}));
+    // Update S11 chart - แสดงเฉพาะข้อมูล S11
+    if (data.s11_data && data.s11_data.length > 0) {
+        const s11Points = data.s11_data.map(d => ({x: d.frequency, y: d.db}));
         
-        s22Chart.data.datasets[0].data = s22Points;
-        s22Chart.update('none');
+        // ล้างข้อมูลเก่าและอัพเดทเฉพาะ S11
+        dbChart.data.datasets[0].data = s11Points;
+        dbChart.data.datasets[0].label = 'S11 (dB)';
+        dbChart.data.datasets[0].borderColor = '#2563eb';
+        dbChart.update('none');
+        
+        console.log(`S11 Chart Updated: ${s11Points.length} points, First: ${s11Points[0]?.y.toFixed(2)} dB, Last: ${s11Points[s11Points.length-1]?.y.toFixed(2)} dB`);
+    }
+
+    // Update S21 chart - แสดงเฉพาะข้อมูล S21 เท่านั้น
+    if (data.s21_data && data.s21_data.length > 0) {
+        const s21Points = data.s21_data.map(d => ({x: d.frequency, y: d.db}));
+        
+        // ล้างข้อมูลเก่าและอัพเดทเฉพาะ S21
+        s21Chart.data.datasets[0].data = s21Points;
+        s21Chart.data.datasets[0].label = 'S21 (dB)';
+        s21Chart.data.datasets[0].borderColor = '#f59e0b';
+        s21Chart.update('none');
+        
+        console.log(`S21 Chart Updated: ${s21Points.length} points, First: ${s21Points[0]?.y.toFixed(2)} dB, Last: ${s21Points[s21Points.length-1]?.y.toFixed(2)} dB`);
+    } else {
+        // ถ้าไม่มีข้อมูล S21 ให้ล้างกราฟ
+        s21Chart.data.datasets[0].data = [];
+        s21Chart.update('none');
+        console.log('S21 Chart Cleared: No data available');
     }
 }
 
@@ -261,7 +249,13 @@ function updateDataTable(data) {
     tbody.innerHTML = '';
 
     // Show first 20 points to avoid overwhelming the table
-    const displayData = data.s11_data.slice(0, 20);
+    const displayData = data.s21_data && data.s21_data.length > 0 ? data.s21_data.slice(0, 20) : [];
+
+    if (displayData.length === 0) {
+        const row = tbody.insertRow();
+        row.innerHTML = `<td colspan="6" class="no-data">No S21 data available</td>`;
+        return;
+    }
 
     displayData.forEach(point => {
         const row = tbody.insertRow();
@@ -275,9 +269,9 @@ function updateDataTable(data) {
         `;
     });
 
-    if (data.s11_data.length > 20) {
+    if (data.s21_data.length > 20) {
         const row = tbody.insertRow();
-        row.innerHTML = `<td colspan="6" class="no-data">Showing first 20 of ${data.s11_data.length} points</td>`;
+        row.innerHTML = `<td colspan="6" class="no-data">Showing first 20 of ${data.s21_data.length} points</td>`;
     }
 }
 
