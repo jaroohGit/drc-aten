@@ -76,6 +76,9 @@ def sweep_loop():
             # Get S11 data with retry until we get all points
             response_s11 = ""
             for attempt in range(3):  # Try up to 3 times
+                ser.reset_input_buffer()  # ล้าง buffer ก่อนอ่าน
+                time.sleep(0.2)
+                
                 ser.write(b"data 0\r\n")
                 time.sleep(0.5)  # Wait for data
                 
@@ -85,31 +88,93 @@ def sweep_loop():
                          and not l.strip().startswith('data')]
                 
                 if len(lines_s11) >= POINTS:
+                    lines_s11 = lines_s11[:POINTS]  # เอาแค่ POINTS จุดแรก
                     break  # Got all points
                     
                 print(f"S11: Attempt {attempt + 1}, got {len(lines_s11)}/{POINTS} points, retrying...")
                 time.sleep(0.2)  # Short delay before retry
             
             print(f"\n[S11 Response - {timestamp}] - {len(lines_s11)} points")
+            if len(lines_s11) >= 3:
+                print(f"  S11 Raw[0]: {lines_s11[0]}")
+                print(f"  S11 Raw[1]: {lines_s11[1]}")
+                print(f"  S11 Raw[2]: {lines_s11[2]}")
             
-            # Get S21 data with retry until we get all points
+            # ===== ล้าง buffer หลายครั้งและรอก่อนอ่าน S21 =====
+            print(f"\n[Preparing to read S21...]")
+            time.sleep(0.5)
+            for _ in range(3):  # ล้าง buffer หลายรอบ
+                ser.reset_input_buffer()
+                time.sleep(0.1)
+                ser.read(ser.in_waiting)
+            
+            # Get S21 data with validation that it's different from S11
             response_s21 = ""
-            for attempt in range(3):  # Try up to 3 times
+            lines_s21 = []
+            max_attempts = 5  # เพิ่มจำนวนครั้งที่ลอง
+            
+            for attempt in range(max_attempts):
+                print(f"\n[S21 Attempt {attempt + 1}/{max_attempts}]")
+                
+                # ล้าง buffer
+                ser.reset_input_buffer()
+                time.sleep(0.2)
+                
+                # สลับไปยัง trace 1 (S21) ทุกครั้ง
+                ser.write(b"trace 1\r\n")
+                time.sleep(0.4)
+                ser.read(ser.in_waiting)
+                
+                # อ่านข้อมูล S21
                 ser.write(b"data 1\r\n")
-                time.sleep(0.5)  # Wait for data
+                time.sleep(0.7)
                 
                 response_s21 = ser.read(ser.in_waiting).decode('utf-8', errors='ignore')
                 lines_s21 = [l.strip() for l in response_s21.split('\n') 
                          if l.strip() and not l.strip().startswith('ch>') 
-                         and not l.strip().startswith('data')]
+                         and not l.strip().startswith('data')
+                         and not l.strip().startswith('trace')]
                 
                 if len(lines_s21) >= POINTS:
-                    break  # Got all points
+                    lines_s21 = lines_s21[:POINTS]
                     
-                print(f"S21: Attempt {attempt + 1}, got {len(lines_s21)}/{POINTS} points, retrying...")
-                time.sleep(0.2)  # Short delay before retry
+                    # ตรวจสอบว่าข้อมูล S21 ต่างจาก S11 หรือไม่
+                    if len(lines_s11) > 0 and len(lines_s21) > 0:
+                        s11_parts = lines_s11[0].split()
+                        s21_parts = lines_s21[0].split()
+                        
+                        if len(s11_parts) >= 2 and len(s21_parts) >= 2:
+                            s11_real = float(s11_parts[0])
+                            s11_imag = float(s11_parts[1])
+                            s21_real = float(s21_parts[0])
+                            s21_imag = float(s21_parts[1])
+                            
+                            # เช็คว่าต่างกันมากกว่า 0.01
+                            diff = abs(s11_real - s21_real) + abs(s11_imag - s21_imag)
+                            
+                            if diff > 0.01:
+                                print(f"  ✓ S21 data verified DIFFERENT from S11 (diff={diff:.4f})")
+                                break
+                            else:
+                                print(f"  ⚠ S21 data too similar to S11 (diff={diff:.4f}), retrying...")
+                                time.sleep(0.5)
+                                continue
+                    
+                    break
+                    
+                print(f"  S21: Got {len(lines_s21)}/{POINTS} points, retrying...")
+                time.sleep(0.3)
             
             print(f"[S21 Response - {timestamp}] - {len(lines_s21)} points")
+            if len(lines_s21) >= 3:
+                print(f"  S21 Raw[0]: {lines_s21[0]}")
+                print(f"  S21 Raw[1]: {lines_s21[1]}")
+                print(f"  S21 Raw[2]: {lines_s21[2]}")
+            
+            # สลับกลับไปยัง trace 0 สำหรับ sweep ครั้งถัดไป
+            ser.write(b"trace 0\r\n")
+            time.sleep(0.2)
+            ser.read(ser.in_waiting)
             
             # Parse S11 data points
             
@@ -165,14 +230,31 @@ def sweep_loop():
                     except (ValueError, ZeroDivisionError):
                         continue
             
-            # Send data via WebSocket
+            # Send data via WebSocket - ต้องได้ข้อมูลครบถ้วนถึงจะส่ง
             if s11_data and len(s11_data) == POINTS:
                 print(f"\n✓ อ่านค่าได้สำเร็จ - Sweep #{sweep_count} [{timestamp}]")
-                print(f"  S11: {len(s11_data)} points | S21: {len(s21_data)} points")
+                print(f"  S11: {len(s11_data)}/{POINTS} points | S21: {len(s21_data)}/{POINTS} points")
                 print(f"  S11 dB: Min={min(d['db'] for d in s11_data):.2f}, Max={max(d['db'] for d in s11_data):.2f}, Avg={sum(d['db'] for d in s11_data)/len(s11_data):.2f}")
+                
                 if s21_data:
                     print(f"  S21 dB: Min={min(d['db'] for d in s21_data):.2f}, Max={max(d['db'] for d in s21_data):.2f}, Avg={sum(d['db'] for d in s21_data)/len(s21_data):.2f}")
-                    print(f"\n  === S21 Data Details ===")
+                    
+                    # ตรวจสอบว่าข้อมูล S21 ต่างจาก S11 หรือไม่
+                    s11_first_3 = [(s11_data[i]['real'], s11_data[i]['imag']) for i in range(min(3, len(s11_data)))]
+                    s21_first_3 = [(s21_data[i]['real'], s21_data[i]['imag']) for i in range(min(3, len(s21_data)))]
+                    
+                    if s11_first_3 == s21_first_3:
+                        print(f"  ⚠ WARNING: S21 data identical to S11! Data may be incorrect!")
+                    else:
+                        print(f"  ✓ S21 data verified different from S11")
+                    
+                    print(f"\n  === Data Comparison (First 3 points) ===")
+                    print(f"  S11[0]: Real={s11_data[0]['real']:.6f}, Imag={s11_data[0]['imag']:.6f}, dB={s11_data[0]['db']:.2f}")
+                    print(f"  S21[0]: Real={s21_data[0]['real']:.6f}, Imag={s21_data[0]['imag']:.6f}, dB={s21_data[0]['db']:.2f}")
+                    print(f"  S11[1]: Real={s11_data[1]['real']:.6f}, Imag={s11_data[1]['imag']:.6f}, dB={s11_data[1]['db']:.2f}")
+                    print(f"  S21[1]: Real={s21_data[1]['real']:.6f}, Imag={s21_data[1]['imag']:.6f}, dB={s21_data[1]['db']:.2f}")
+                    print(f"  S11[2]: Real={s11_data[2]['real']:.6f}, Imag={s11_data[2]['imag']:.6f}, dB={s11_data[2]['db']:.2f}")
+                    print(f"  S21[2]: Real={s21_data[2]['real']:.6f}, Imag={s21_data[2]['imag']:.6f}, dB={s21_data[2]['db']:.2f}")
                     # Show first 5 and last 5 data points
                     print(f"  First 5 points:")
                     for i in range(min(5, len(s21_data))):

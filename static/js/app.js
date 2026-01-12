@@ -181,7 +181,8 @@ function setupWebSocket() {
 
     socket.on('error', function(data) {
         console.error('Error:', data.message);
-        alert('Error: ' + data.message);
+        // แสดง notification แทน alert
+        showNotification('Error: ' + data.message, 'error');
     });
 }
 
@@ -211,36 +212,72 @@ function updateDashboard(data) {
 
 // Update charts with new data
 function updateCharts(data) {
-    // Update S11 chart - แสดงเฉพาะข้อมูล S11
+    console.log('=== updateCharts called ===');
+    console.log('S11 data points:', data.s11_data?.length || 0);
+    console.log('S21 data points:', data.s21_data?.length || 0);
+    
+    // แสดงตัวอย่างข้อมูล S11 และ S21 เพื่อเปรียบเทียบ
     if (data.s11_data && data.s11_data.length > 0) {
-        const s11Points = data.s11_data.map(d => ({x: d.frequency, y: d.db}));
+        console.log('S11 Sample[0]:', JSON.stringify(data.s11_data[0]));
+    }
+    
+    if (data.s21_data && data.s21_data.length > 0) {
+        console.log('S21 Sample[0]:', JSON.stringify(data.s21_data[0]));
         
-        // ล้างข้อมูลเก่าและอัพเดทเฉพาะ S11
+        // เปรียบเทียบว่าข้อมูล S11 และ S21 เหมือนกันหรือไม่
+        if (data.s11_data && data.s11_data.length > 0) {
+            const s11_first = data.s11_data[0];
+            const s21_first = data.s21_data[0];
+            if (s11_first.real === s21_first.real && s11_first.imag === s21_first.imag) {
+                console.error('❌ ERROR: S21 data is IDENTICAL to S11 data!');
+            } else {
+                console.log('✓ S21 data is DIFFERENT from S11 data');
+            }
+        }
+    }
+    
+    // Update S11 chart - ใช้วิธี update ปกติ
+    if (data.s11_data && data.s11_data.length > 0 && dbChart) {
+        // สร้าง array ใหม่โดย deep copy เพื่อป้องกันการอ้างอิงเดียวกัน
+        const s11Points = data.s11_data.map(d => ({
+            x: parseFloat(d.frequency), 
+            y: parseFloat(d.db)
+        }));
+        
+        // Update ข้อมูลในกราฟ
         dbChart.data.datasets[0].data = s11Points;
         dbChart.data.datasets[0].label = 'S11 (dB)';
         dbChart.data.datasets[0].borderColor = '#2563eb';
+        dbChart.data.datasets[0].backgroundColor = 'rgba(37, 99, 235, 0.1)';
         dbChart.update('none');
         
-        console.log(`S11 Chart Updated: ${s11Points.length} points, First: ${s11Points[0]?.y.toFixed(2)} dB, Last: ${s11Points[s11Points.length-1]?.y.toFixed(2)} dB`);
+        console.log(`✓ S11 Chart Updated: ${s11Points.length} points | Range: ${s11Points[0]?.y.toFixed(2)} to ${s11Points[s11Points.length-1]?.y.toFixed(2)} dB`);
     }
 
-    // Update S21 chart - แสดงเฉพาะข้อมูล S21 เท่านั้น
-    if (data.s21_data && data.s21_data.length > 0) {
-        const s21Points = data.s21_data.map(d => ({x: d.frequency, y: d.db}));
+    // Update S21 chart - ใช้วิธี update ปกติ (แยกจาก S11 โดยสิ้นเชิง)
+    if (data.s21_data && data.s21_data.length > 0 && s21Chart) {
+        // สร้าง array ใหม่โดย deep copy เพื่อป้องกันการอ้างอิงเดียวกัน
+        const s21Points = data.s21_data.map(d => ({
+            x: parseFloat(d.frequency), 
+            y: parseFloat(d.db)
+        }));
         
-        // ล้างข้อมูลเก่าและอัพเดทเฉพาะ S21
+        // Update ข้อมูลในกราฟ S21 โดยไม่ยุ่งกับ S11
         s21Chart.data.datasets[0].data = s21Points;
         s21Chart.data.datasets[0].label = 'S21 (dB)';
         s21Chart.data.datasets[0].borderColor = '#f59e0b';
+        s21Chart.data.datasets[0].backgroundColor = 'rgba(245, 158, 11, 0.1)';
         s21Chart.update('none');
         
-        console.log(`S21 Chart Updated: ${s21Points.length} points, First: ${s21Points[0]?.y.toFixed(2)} dB, Last: ${s21Points[s21Points.length-1]?.y.toFixed(2)} dB`);
-    } else {
+        console.log(`✓ S21 Chart Updated: ${s21Points.length} points | Range: ${s21Points[0]?.y.toFixed(2)} to ${s21Points[s21Points.length-1]?.y.toFixed(2)} dB`);
+    } else if (s21Chart) {
         // ถ้าไม่มีข้อมูล S21 ให้ล้างกราฟ
         s21Chart.data.datasets[0].data = [];
         s21Chart.update('none');
-        console.log('S21 Chart Cleared: No data available');
+        console.log('⚠ S21 Chart: No data available - cleared');
     }
+    
+    console.log('=== updateCharts completed ===\n');
 }
 
 // Update data table
@@ -311,4 +348,56 @@ function updateTime() {
     const now = new Date();
     const timeString = now.toLocaleTimeString('en-US', { hour12: false });
     document.getElementById('currentTime').textContent = timeString;
+}
+
+// Show notification without blocking
+function showNotification(message, type = 'info') {
+    // สร้าง notification element
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        padding: 15px 20px;
+        background-color: ${type === 'error' ? '#ef4444' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        z-index: 10000;
+        animation: slideIn 0.3s ease-out;
+        max-width: 400px;
+        font-size: 14px;
+    `;
+    
+    // เพิ่ม animation
+    const style = document.createElement('style');
+    if (!document.getElementById('notification-style')) {
+        style.id = 'notification-style';
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(400px); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(400px); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    // เพิ่ม notification เข้าไปใน body
+    document.body.appendChild(notification);
+    
+    // ลบ notification หลังจาก 5 วินาที
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, 5000);
 }
