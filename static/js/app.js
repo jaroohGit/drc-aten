@@ -4,14 +4,22 @@ const socket = io();
 // Chart instances
 let dbChart = null;
 let s21Chart = null;
+let historicalChart = null;
 
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initializeCharts();
     setupEventListeners();
     setupWebSocket();
+    setupSettingsPage();
     updateTime();
     setInterval(updateTime, 1000);
+    
+    // Request initial connection status
+    socket.emit('get_connection_status');
+    
+    // Request initial config
+    socket.emit('get_config');
 });
 
 // Initialize Chart.js charts
@@ -36,7 +44,14 @@ function initializeCharts() {
             plugins: {
                 legend: {
                     display: true,
-                    position: 'top'
+                    position: 'top',
+                    labels: {
+                        font: {
+                            size: 10
+                        },
+                        padding: 5,
+                        boxWidth: 15
+                    }
                 }
             },
             scales: {
@@ -44,14 +59,30 @@ function initializeCharts() {
                     type: 'linear',
                     title: {
                         display: true,
-                        text: 'Frequency (GHz)'
+                        text: 'Frequency (GHz)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
                     },
                     max: 0.95
                 },
                 y: {
                     title: {
                         display: true,
-                        text: 'Magnitude (dB)'
+                        text: 'Magnitude (dB)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
                     },
                     min: -50,
                     max: 0
@@ -83,7 +114,14 @@ function initializeCharts() {
             plugins: {
                 legend: {
                     display: true,
-                    position: 'top'
+                    position: 'top',
+                    labels: {
+                        font: {
+                            size: 10
+                        },
+                        padding: 5,
+                        boxWidth: 15
+                    }
                 }
             },
             scales: {
@@ -91,17 +129,158 @@ function initializeCharts() {
                     type: 'linear',
                     title: {
                         display: true,
-                        text: 'Frequency (GHz)'
+                        text: 'Frequency (GHz)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
                     },
                     max: 0.95
                 },
                 y: {
                     title: {
                         display: true,
-                        text: 'Magnitude (dB)'
+                        text: 'Magnitude (dB)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
                     },
                     min: -50,
                     max: 0
+                }
+            },
+            animation: {
+                duration: 300
+            }
+        }
+    });
+
+    const historicalCtx = document.getElementById('historicalChart').getContext('2d');
+    historicalChart = new Chart(historicalCtx, {
+        type: 'line',
+        data: {
+            datasets: [
+                {
+                    label: 'S11 Average',
+                    data: [],
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false
+                },
+                {
+                    label: 'S11 Max',
+                    data: [],
+                    borderColor: '#16a34a',
+                    backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'S11 Min',
+                    data: [],
+                    borderColor: '#dc2626',
+                    backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'S21 Average',
+                    data: [],
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false
+                },
+                {
+                    label: 'S21 Max',
+                    data: [],
+                    borderColor: '#84cc16',
+                    backgroundColor: 'rgba(132, 204, 22, 0.1)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'S21 Min',
+                    data: [],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 1,
+                    pointRadius: 0,
+                    tension: 0.4,
+                    fill: false,
+                    borderDash: [5, 5]
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        font: {
+                            size: 9
+                        },
+                        padding: 3,
+                        boxWidth: 12
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Time (seconds ago)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
+                    },
+                    reverse: true
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Magnitude (dB)',
+                        font: {
+                            size: 10
+                        }
+                    },
+                    ticks: {
+                        font: {
+                            size: 9
+                        }
+                    }
                 }
             },
             animation: {
@@ -117,9 +296,30 @@ function setupEventListeners() {
     document.getElementById('menuToggle').addEventListener('click', function() {
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
-        sidebar.classList.toggle('collapsed');
-        mainContent.classList.toggle('expanded');
+        
+        // Toggle sidebar visibility (responsive behavior)
+        if (window.innerWidth <= 1024) {
+            sidebar.classList.toggle('show');
+        } else {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        }
     });
+    
+    // Close sidebar when clicking outside on mobile
+    document.addEventListener('click', function(event) {
+        if (window.innerWidth <= 1024) {
+            const sidebar = document.getElementById('sidebar');
+            const menuToggle = document.getElementById('menuToggle');
+            
+            if (!sidebar.contains(event.target) && event.target !== menuToggle && sidebar.classList.contains('show')) {
+                sidebar.classList.remove('show');
+            }
+        }
+    });
+    
+    // Handle window resize
+    window.addEventListener('resize', handleResize);
 
     // Navigation
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -127,6 +327,11 @@ function setupEventListeners() {
             e.preventDefault();
             const page = this.dataset.page;
             switchPage(page);
+            
+            // Close sidebar on mobile after navigation
+            if (window.innerWidth <= 1024) {
+                document.getElementById('sidebar').classList.remove('show');
+            }
         });
     });
 
@@ -142,6 +347,29 @@ function setupEventListeners() {
         this.disabled = true;
         document.getElementById('startBtn').disabled = false;
     });
+}
+
+// Handle window resize for responsive behavior
+function handleResize() {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('mainContent');
+    
+    if (window.innerWidth > 1024) {
+        // Desktop mode
+        sidebar.classList.remove('show');
+        if (!sidebar.classList.contains('collapsed')) {
+            mainContent.classList.remove('expanded');
+        }
+    } else {
+        // Mobile/Tablet mode
+        sidebar.classList.remove('collapsed');
+        mainContent.classList.remove('expanded');
+    }
+    
+    // Resize charts to fit new dimensions
+    if (dbChart) dbChart.resize();
+    if (s21Chart) s21Chart.resize();
+    if (historicalChart) historicalChart.resize();
 }
 
 // Setup WebSocket handlers
@@ -169,6 +397,11 @@ function setupWebSocket() {
         updateDashboard(data);
         updateCharts(data);
         updateDataTable(data);
+        
+        // Update connection status display in Settings page
+        if (data.connection_status) {
+            updateConnectionStatusDisplay(data.connection_status);
+        }
     });
 
     socket.on('status', function(data) {
@@ -176,6 +409,11 @@ function setupWebSocket() {
         if (data.running !== undefined) {
             document.getElementById('startBtn').disabled = data.running;
             document.getElementById('stopBtn').disabled = !data.running;
+        }
+        
+        // Update connection status if available
+        if (data.connection_status) {
+            updateConnectionStatusDisplay(data.connection_status);
         }
     });
 
@@ -275,6 +513,45 @@ function updateCharts(data) {
         s21Chart.data.datasets[0].data = [];
         s21Chart.update('none');
         console.log('⚠ S21 Chart: No data available - cleared');
+    }
+    
+    // Update Historical chart
+    if (data.historical && historicalChart) {
+        const currentTime = Date.now() / 1000;
+        const timePoints = data.historical.timestamps.map(t => currentTime - t);
+        
+        historicalChart.data.datasets[0].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s11_avg[i]
+        }));
+        
+        historicalChart.data.datasets[1].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s11_max[i]
+        }));
+        
+        historicalChart.data.datasets[2].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s11_min[i]
+        }));
+        
+        historicalChart.data.datasets[3].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s21_avg[i]
+        }));
+        
+        historicalChart.data.datasets[4].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s21_max[i]
+        }));
+        
+        historicalChart.data.datasets[5].data = timePoints.map((t, i) => ({
+            x: t,
+            y: data.historical.s21_min[i]
+        }));
+        
+        historicalChart.update('none');
+        console.log(`✓ Historical Chart Updated: ${timePoints.length} points`);
     }
     
     console.log('=== updateCharts completed ===\n');
@@ -401,3 +678,155 @@ function showNotification(message, type = 'info') {
         }, 300);
     }, 5000);
 }
+// Settings page functionality
+function setupSettingsPage() {
+    const scanPortsBtn = document.getElementById('scanPortsBtn');
+    const testConnectionBtn = document.getElementById('testConnectionBtn');
+    const updateConfigBtn = document.getElementById('updateConfigBtn');
+    const portSelect = document.getElementById('portSelect');
+    
+    // Scan for available ports
+    if (scanPortsBtn) {
+        scanPortsBtn.addEventListener('click', () => {
+            socket.emit('scan_ports');
+            showNotification('Scanning for COM ports...', 'info');
+        });
+    }
+    
+    // Test connection
+    if (testConnectionBtn) {
+        testConnectionBtn.addEventListener('click', () => {
+            const selectedPort = portSelect.value;
+            if (!selectedPort) {
+                showNotification('Please select a port first', 'error');
+                return;
+            }
+            socket.emit('test_connection', { port: selectedPort });
+            showNotification('Testing connection...', 'info');
+        });
+    }
+    
+    // Update configuration
+    if (updateConfigBtn) {
+        updateConfigBtn.addEventListener('click', () => {
+            const config = {
+                start_freq: parseFloat(document.getElementById('startFreqInput').value),
+                stop_freq: parseFloat(document.getElementById('stopFreqInput').value),
+                points: parseInt(document.getElementById('pointsInput').value),
+                interval: parseInt(document.getElementById('intervalInput').value)
+            };
+            
+            socket.emit('update_config', config);
+            showNotification('Updating configuration...', 'info');
+        });
+    }
+    
+    // Change port when selected
+    if (portSelect) {
+        portSelect.addEventListener('change', () => {
+            const selectedPort = portSelect.value;
+            if (selectedPort) {
+                socket.emit('change_port', { port: selectedPort });
+            }
+        });
+    }
+}
+
+// Handle ports list from server
+socket.on('ports_list', (data) => {
+    const portSelect = document.getElementById('portSelect');
+    if (!portSelect) return;
+    
+    // Clear existing options except first
+    portSelect.innerHTML = '<option value="">-- Select Port --</option>';
+    
+    // Add available ports
+    data.ports.forEach(port => {
+        const option = document.createElement('option');
+        option.value = port.port;
+        option.textContent = `${port.port} - ${port.description}`;
+        portSelect.appendChild(option);
+    });
+    
+    showNotification(`Found ${data.ports.length} COM port(s)`, 'success');
+});
+
+// Handle connection test result
+socket.on('connection_test', (data) => {
+    if (data.success) {
+        showNotification(`✓ Connection test passed: ${data.port}`, 'success');
+    } else {
+        showNotification(`✗ Connection test failed: ${data.message}`, 'error');
+    }
+});
+
+// Update connection status display
+function updateConnectionStatusDisplay(status) {
+    const deviceStatus = document.getElementById('deviceStatus');
+    const statusPort = document.getElementById('statusPort');
+    const statusLastSweep = document.getElementById('statusLastSweep');
+    const signalQualityFill = document.getElementById('signalQualityFill');
+    const signalQualityText = document.getElementById('signalQualityText');
+    
+    if (!deviceStatus) return;
+    
+    const indicator = deviceStatus.querySelector('.status-indicator');
+    const statusText = deviceStatus.querySelector('.status-text');
+    
+    if (status.connected) {
+        deviceStatus.className = 'status-badge status-connected';
+        statusText.textContent = 'Connected';
+        indicator.style.backgroundColor = '#10b981';
+    } else {
+        deviceStatus.className = 'status-badge status-disconnected';
+        statusText.textContent = status.error ? 'Error' : 'Disconnected';
+        indicator.style.backgroundColor = '#ef4444';
+    }
+    
+    if (statusPort) statusPort.textContent = status.port || '--';
+    if (statusLastSweep) statusLastSweep.textContent = status.last_sweep_time || '--';
+    
+    // Update signal quality bar
+    if (signalQualityFill && signalQualityText) {
+        const quality = status.signal_quality || 0;
+        signalQualityFill.style.width = `${quality}%`;
+        signalQualityText.textContent = `${quality.toFixed(0)}%`;
+        
+        // Color based on quality
+        if (quality >= 70) {
+            signalQualityFill.style.backgroundColor = '#10b981';
+        } else if (quality >= 40) {
+            signalQualityFill.style.backgroundColor = '#f59e0b';
+        } else {
+            signalQualityFill.style.backgroundColor = '#ef4444';
+        }
+    }
+}
+
+// Handle connection status updates
+socket.on('connection_status_update', (status) => {
+    updateConnectionStatusDisplay(status);
+});
+
+// Update config display when received
+socket.on('config', (config) => {
+    const startFreqInput = document.getElementById('startFreqInput');
+    const stopFreqInput = document.getElementById('stopFreqInput');
+    const pointsInput = document.getElementById('pointsInput');
+    const intervalInput = document.getElementById('intervalInput');
+    const portSelect = document.getElementById('portSelect');
+    
+    if (startFreqInput) startFreqInput.value = config.start_freq;
+    if (stopFreqInput) stopFreqInput.value = config.stop_freq;
+    if (pointsInput) pointsInput.value = config.points;
+    if (intervalInput) intervalInput.value = config.interval;
+    if (portSelect && portSelect.options.length > 1) {
+        // Set selected port
+        for (let i = 0; i < portSelect.options.length; i++) {
+            if (portSelect.options[i].value === config.port) {
+                portSelect.selectedIndex = i;
+                break;
+            }
+        }
+    }
+});

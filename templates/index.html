@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>DRC Online - Premeir System Engineering</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
@@ -154,13 +154,94 @@
                     </div>
                 </div>
             </div>
+
+            <div class="charts-container">
+                <div class="chart-card" style="grid-column: 1 / -1;">
+                    <div class="chart-header">
+                        <h3>Historical Data - Average, Max, Min (Last 5 Minutes)</h3>
+                        <span class="chart-subtitle">Time Series View</span>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="historicalChart"></canvas>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Settings Page -->
         <div class="page" id="settingsPage">
             <div class="content-card">
                 <h2>Settings</h2>
-                <p>Configuration settings will be available here.</p>
+                
+                <!-- Connection Settings -->
+                <div class="settings-section">
+                    <h3>📡 Connection Settings</h3>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">COM Port:</label>
+                        <div class="port-select-wrapper">
+                            <select id="portSelect" class="setting-input">
+                                <option value="">-- Select Port --</option>
+                            </select>
+                            <button class="btn btn-primary btn-sm" id="scanPortsBtn">🔄 Scan Ports</button>
+                            <button class="btn btn-success btn-sm" id="testConnectionBtn">🔌 Test Connection</button>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">Connection Status:</label>
+                        <div class="connection-status-display">
+                            <div class="status-badge" id="deviceStatus">
+                                <span class="status-indicator"></span>
+                                <span class="status-text">Disconnected</span>
+                            </div>
+                            <div class="status-details" id="statusDetails">
+                                <div class="status-item">
+                                    <span class="status-item-label">Port:</span>
+                                    <span class="status-item-value" id="statusPort">--</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-item-label">Last Sweep:</span>
+                                    <span class="status-item-value" id="statusLastSweep">--</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-item-label">Signal Quality:</span>
+                                    <div class="signal-quality-bar">
+                                        <div class="signal-quality-fill" id="signalQualityFill" style="width: 0%"></div>
+                                        <span class="signal-quality-text" id="signalQualityText">0%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Frequency Settings -->
+                <div class="settings-section">
+                    <h3>📊 Sweep Configuration</h3>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="startFreqInput">Start Frequency (GHz):</label>
+                        <input type="number" id="startFreqInput" class="setting-input" step="0.01" min="0.05" max="4.4" value="0.9">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="stopFreqInput">Stop Frequency (GHz):</label>
+                        <input type="number" id="stopFreqInput" class="setting-input" step="0.01" min="0.05" max="4.4" value="0.95">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="pointsInput">Points:</label>
+                        <input type="number" id="pointsInput" class="setting-input" step="1" min="11" max="201" value="101">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="intervalInput">Sweep Interval (ms):</label>
+                        <input type="number" id="intervalInput" class="setting-input" step="100" min="500" max="10000" value="1000">
+                    </div>
+                    
+                    <button class="btn btn-primary" id="updateConfigBtn">💾 Save Configuration</button>
+                </div>
             </div>
         </div>
 
