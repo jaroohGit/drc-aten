@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 </head>
 <body>
     <!-- Header -->
@@ -17,13 +18,11 @@
             <span class="company-name">Premeir System Engineering Co.ltd</span>
         </div>
         <div class="header-right">
-            <div class="status-indicator" id="connectionStatus">
-                <span class="status-dot"></span>
-                <span class="status-text">Disconnected</span>
+            <div class="connection-status" id="connectionStatus">
+                <span class="dot"></span>
+                <span>Disconnected</span>
             </div>
-            <div class="header-info">
-                <span id="currentTime">--:--:--</span>
-            </div>
+            <div class="current-time" id="currentTime">--:--:--</div>
         </div>
     </header>
 
@@ -37,6 +36,10 @@
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">Dashboard</span>
             </a>
+            <a href="#" class="nav-item" data-page="analysis">
+                <span class="nav-icon">🔬</span>
+                <span class="nav-text">Analysis</span>
+            </a>
             <a href="#" class="nav-item" data-page="settings">
                 <span class="nav-icon">⚙️</span>
                 <span class="nav-text">Settings</span>
@@ -44,6 +47,10 @@
             <a href="#" class="nav-item" data-page="data">
                 <span class="nav-icon">📈</span>
                 <span class="nav-text">Data View</span>
+            </a>
+            <a href="#" class="nav-item" data-page="history">
+                <span class="nav-icon">🗄️</span>
+                <span class="nav-text">Historical Data</span>
             </a>
         </nav>
         
@@ -108,9 +115,6 @@
                         <div class="stat-subtitle" id="minDbFreq" style="font-size: 0.8em; color: #6b7280; margin-top: 4px;">--</div>
                     </div>
                 </div>
-            </div>
-
-            <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">📊</div>
                     <div class="stat-info">
@@ -131,6 +135,73 @@
                         <div class="stat-label">Min S21 (dB)</div>
                         <div class="stat-value" id="minS21">--</div>
                     </div>
+                </div>
+                
+                <!-- Save Data Card -->
+                <div class="stat-card save-card">
+                    <div class="save-card-content">
+                        <button class="btn-save" id="saveDataBtn" title="Save current measurement">
+                            💾 Save Data
+                        </button>
+                        <div class="last-saved-info" id="lastSavedInfo">
+                            <span class="last-saved-label">Last Saved:</span>
+                            <span class="last-saved-time" id="lastSavedTime">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Scan Progress Section -->
+            <div id="scanProgressSection" class="scan-progress-section" style="display: none;">
+                <div class="content-card">
+                    <h3>🔄 Scan in Progress</h3>
+                    <div class="scan-info">
+                        <div class="scan-stats">
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Elapsed Time:</span>
+                                <span class="scan-stat-value" id="scanElapsedTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Total Time:</span>
+                                <span class="scan-stat-value" id="scanTotalTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Samples Collected:</span>
+                                <span class="scan-stat-value" id="scanSamplesCount">0</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                            <span class="progress-text" id="scanProgressText">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="cancelScanBtn">⏹ Cancel Scan</button>
+                </div>
+            </div>
+            <!-- Scan Progress Section -->
+            <div id="scanProgressSection" class="scan-progress-section" style="display: none;">
+                <div class="content-card">
+                    <h3>🔄 Scan in Progress</h3>
+                    <div class="scan-info">
+                        <div class="scan-stats">
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Elapsed Time:</span>
+                                <span class="scan-stat-value" id="scanElapsedTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Total Time:</span>
+                                <span class="scan-stat-value" id="scanTotalTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Samples Collected:</span>
+                                <span class="scan-stat-value" id="scanSamplesCount">0</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                            <span class="progress-text" id="scanProgressText">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="cancelScanBtn">⏹ Cancel Scan</button>
                 </div>
             </div>
 
@@ -161,7 +232,7 @@
                         <h3>Historical Data - Average, Max, Min (Last 5 Minutes)</h3>
                         <span class="chart-subtitle">Time Series View</span>
                     </div>
-                    <div class="chart-wrapper">
+                    <div class="chart-wrapper" style="height: 400px;">
                         <canvas id="historicalChart"></canvas>
                     </div>
                 </div>
@@ -242,6 +313,166 @@
                     
                     <button class="btn btn-primary" id="updateConfigBtn">💾 Save Configuration</button>
                 </div>
+                
+                <!-- Reference Lines Settings -->
+                <div class="settings-section">
+                    <h3>📏 Reference Lines (Historical Chart)</h3>
+                    <p class="settings-hint">Add horizontal reference lines to the historical chart. Drag lines on the chart to adjust values.</p>
+                    
+                    <!-- Reference Line 1 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine1Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 1
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Label">Label:</label>
+                                <input type="text" id="refLine1Label" class="setting-input-sm" value="High Level" placeholder="e.g., High Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Value">Value (dB):</label>
+                                <input type="number" id="refLine1Value" class="setting-input-sm" value="-10" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Color">Color:</label>
+                                <input type="color" id="refLine1Color" class="setting-input-color" value="#ef4444">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 2 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine2Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 2
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Label">Label:</label>
+                                <input type="text" id="refLine2Label" class="setting-input-sm" value="Target Level" placeholder="e.g., Target Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Value">Value (dB):</label>
+                                <input type="number" id="refLine2Value" class="setting-input-sm" value="-15" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Color">Color:</label>
+                                <input type="color" id="refLine2Color" class="setting-input-color" value="#f59e0b">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 3 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine3Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 3
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Label">Label:</label>
+                                <input type="text" id="refLine3Label" class="setting-input-sm" value="Low Level" placeholder="e.g., Low Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Value">Value (dB):</label>
+                                <input type="number" id="refLine3Value" class="setting-input-sm" value="-20" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Color">Color:</label>
+                                <input type="color" id="refLine3Color" class="setting-input-color" value="#10b981">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 4 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine4Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 4
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Label">Label:</label>
+                                <input type="text" id="refLine4Label" class="setting-input-sm" value="Critical Level" placeholder="e.g., Critical Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Value">Value (dB):</label>
+                                <input type="number" id="refLine4Value" class="setting-input-sm" value="-25" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Color">Color:</label>
+                                <input type="color" id="refLine4Color" class="setting-input-color" value="#8b5cf6">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="updateRefLinesBtn">💾 Update Reference Lines</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analysis Page -->
+        <div class="page" id="analysisPage">
+            <div class="content-card">
+                <h2>🔬 Measurement Analysis</h2>
+                <p style="color: #6b7280; margin-bottom: 20px;">Automatic detection and comparison of measurement periods</p>
+                
+                <div class="analysis-controls">
+                    <button class="btn btn-primary" id="analyzeBtn">🔄 Analyze Historical Data</button>
+                    <div class="analysis-info">
+                        <span id="analysisStatus">Click "Analyze" to detect measurement periods</span>
+                    </div>
+                </div>
+                
+                <!-- Measurement Periods -->
+                <div class="analysis-section">
+                    <h3>📋 Detected Measurement Periods</h3>
+                    <div id="periodsContainer" class="periods-container">
+                        <div class="no-data">No measurement periods detected yet</div>
+                    </div>
+                </div>
+                
+                <!-- Similarity Comparisons -->
+                <div class="analysis-section">
+                    <h3>🔍 Similarity Comparisons</h3>
+                    <div id="comparisonsContainer" class="comparisons-container">
+                        <div class="no-data">No comparisons available yet</div>
+                    </div>
+                </div>
+                
+                <!-- Analysis Summary -->
+                <div class="analysis-section">
+                    <h3>📊 Analysis Summary</h3>
+                    <div id="summaryContainer" class="summary-container">
+                        <div class="summary-grid">
+                            <div class="summary-card">
+                                <div class="summary-label">Total Periods</div>
+                                <div class="summary-value" id="totalPeriods">0</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-label">Comparisons</div>
+                                <div class="summary-value" id="totalComparisons">0</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-label">Same Sample</div>
+                                <div class="summary-value" id="sameSampleCount">0</div>
+                            </div>
+                            <div class="summary-card">
+                                <div class="summary-label">Avg Similarity</div>
+                                <div class="summary-value" id="avgSimilarity">0%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -270,7 +501,79 @@
                 </div>
             </div>
         </div>
+
+        <!-- Historical Data Page -->
+        <div class="page" id="historyPage">
+            <div class="content-card">
+                <h2 class="page-title">📊 Historical Data from Database</h2>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Query Filters</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label>Date Range:</label>
+                                <input type="datetime-local" id="startDate" class="filter-input">
+                                <span>to</span>
+                                <input type="datetime-local" id="endDate" class="filter-input">
+                            </div>
+                            <div class="filter-group">
+                                <label>Limit:</label>
+                                <select id="limitRecords" class="filter-select">
+                                    <option value="50">50 records</option>
+                                    <option value="100" selected>100 records</option>
+                                    <option value="500">500 records</option>
+                                    <option value="1000">1000 records</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" id="queryDataBtn" onclick="queryHistoricalData()">🔍 Query Data</button>
+                            <button class="btn btn-secondary" id="exportCsvBtn" onclick="exportToCsv()">📥 Export CSV</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Results</h3>
+                        <span id="recordCount" class="record-count">0 records</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="historyLoadingMsg" class="loading-message" style="display: none;">
+                            ⏳ Loading data...
+                        </div>
+                        <div id="historyErrorMsg" class="error-message" style="display: none;"></div>
+                        <div class="table-container">
+                            <table id="historyTable" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Sweep #</th>
+                                        <th>S11 RMS (dB)</th>
+                                        <th>S11 Min (dB)</th>
+                                        <th>S11 Max (dB)</th>
+                                        <th>S21 RMS (dB)</th>
+                                        <th>S21 Min (dB)</th>
+                                        <th>S21 Max (dB)</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historyTableBody">
+                                    <tr>
+                                        <td colspan="9" class="no-data">No data available. Query database to load records.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

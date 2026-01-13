@@ -6,6 +6,9 @@ let dbChart = null;
 let s21Chart = null;
 let historicalChart = null;
 
+// Current measurement data
+let currentMeasurement = null;
+
 // Initialize when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initializeCharts();
@@ -249,6 +252,9 @@ function initializeCharts() {
                         padding: 3,
                         boxWidth: 12
                     }
+                },
+                annotation: {
+                    annotations: {}
                 }
             },
             scales: {
@@ -288,23 +294,125 @@ function initializeCharts() {
             }
         }
     });
+    
+    // Load reference lines from localStorage
+    loadReferenceLines();
+}
+
+// Reference Lines Management
+function loadReferenceLines() {
+    const defaultLines = [
+        { enabled: true, label: 'High Level', value: -10, color: '#ef4444' },
+        { enabled: true, label: 'Target Level', value: -15, color: '#f59e0b' },
+        { enabled: true, label: 'Low Level', value: -20, color: '#10b981' },
+        { enabled: true, label: 'Critical Level', value: -25, color: '#8b5cf6' }
+    ];
+    
+    let refLines = [];
+    try {
+        const stored = localStorage.getItem('referenceLines');
+        refLines = stored ? JSON.parse(stored) : defaultLines;
+    } catch {
+        refLines = defaultLines;
+    }
+    
+    // Update UI
+    for (let i = 0; i < 4; i++) {
+        const line = refLines[i] || defaultLines[i];
+        document.getElementById(`refLine${i+1}Enabled`).checked = line.enabled;
+        document.getElementById(`refLine${i+1}Label`).value = line.label;
+        document.getElementById(`refLine${i+1}Value`).value = line.value;
+        document.getElementById(`refLine${i+1}Color`).value = line.color;
+    }
+    
+    // Update chart
+    updateChartReferenceLines();
+}
+
+function saveReferenceLines() {
+    const refLines = [];
+    for (let i = 1; i <= 4; i++) {
+        refLines.push({
+            enabled: document.getElementById(`refLine${i}Enabled`).checked,
+            label: document.getElementById(`refLine${i}Label`).value,
+            value: parseFloat(document.getElementById(`refLine${i}Value`).value),
+            color: document.getElementById(`refLine${i}Color`).value
+        });
+    }
+    localStorage.setItem('referenceLines', JSON.stringify(refLines));
+    updateChartReferenceLines();
+    showNotification('Reference lines updated', 'success');
+}
+
+function updateChartReferenceLines() {
+    if (!historicalChart) return;
+    
+    const annotations = {};
+    
+    for (let i = 1; i <= 4; i++) {
+        const enabled = document.getElementById(`refLine${i}Enabled`).checked;
+        const label = document.getElementById(`refLine${i}Label`).value;
+        const value = parseFloat(document.getElementById(`refLine${i}Value`).value);
+        const color = document.getElementById(`refLine${i}Color`).value;
+        
+        if (enabled) {
+            annotations[`refLine${i}`] = {
+                type: 'line',
+                yMin: value,
+                yMax: value,
+                borderColor: color,
+                borderWidth: 2,
+                borderDash: [10, 5],
+                label: {
+                    display: true,
+                    content: label,
+                    position: 'end',
+                    backgroundColor: color,
+                    color: '#ffffff',
+                    font: {
+                        size: 10,
+                        weight: 'bold'
+                    },
+                    padding: 4,
+                    borderRadius: 4
+                }
+            };
+        }
+    }
+    
+    historicalChart.options.plugins.annotation.annotations = annotations;
+    historicalChart.update('none');
 }
 
 // Setup event listeners
 function setupEventListeners() {
     // Menu toggle
-    document.getElementById('menuToggle').addEventListener('click', function() {
-        const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
-        
-        // Toggle sidebar visibility (responsive behavior)
-        if (window.innerWidth <= 1024) {
-            sidebar.classList.toggle('show');
-        } else {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-        }
-    });
+    const menuToggleBtn = document.getElementById('menuToggle');
+    console.log('Menu toggle button:', menuToggleBtn);
+    
+    if (menuToggleBtn) {
+        menuToggleBtn.addEventListener('click', function(e) {
+            console.log('Menu clicked!');
+            e.stopPropagation();
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            
+            console.log('Sidebar:', sidebar);
+            console.log('Window width:', window.innerWidth);
+            
+            // Toggle sidebar visibility (responsive behavior)
+            if (window.innerWidth <= 1024) {
+                sidebar.classList.toggle('show');
+                console.log('Mobile mode - toggled show class');
+            } else {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('expanded');
+                console.log('Desktop mode - toggled collapsed class');
+            }
+        });
+    } else {
+        console.error('Menu toggle button not found!');
+    }
     
     // Close sidebar when clicking outside on mobile
     document.addEventListener('click', function(event) {
@@ -346,6 +454,16 @@ function setupEventListeners() {
         socket.emit('stop_sweep');
         this.disabled = true;
         document.getElementById('startBtn').disabled = false;
+    });
+    
+    // Analysis button
+    document.getElementById('analyzeBtn').addEventListener('click', function() {
+        analyzeHistoricalData();
+    });
+    
+    // Save Data button
+    document.getElementById('saveDataBtn').addEventListener('click', function() {
+        saveCurrentMeasurement();
     });
 }
 
@@ -394,6 +512,7 @@ function setupWebSocket() {
     });
 
     socket.on('sweep_data', function(data) {
+        currentMeasurement = data;  // Store current measurement
         updateDashboard(data);
         updateCharts(data);
         updateDataTable(data);
@@ -421,6 +540,28 @@ function setupWebSocket() {
         console.error('Error:', data.message);
         // แสดง notification แทน alert
         showNotification('Error: ' + data.message, 'error');
+    });
+    
+    socket.on('save_result', function(data) {
+        const saveBtn = document.getElementById('saveDataBtn');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '💾 Save Data';
+        }
+        
+        if (data.success) {
+            showNotification(data.message || 'Data saved successfully!', 'success');
+            
+            // Update last saved display
+            if (data.last_saved) {
+                updateLastSavedDisplay(data.last_saved);
+            }
+            if (data.timestamp) {
+                document.getElementById('lastSavedTime').textContent = new Date(data.timestamp).toLocaleString();
+            }
+        } else {
+            showNotification(data.message || 'Failed to save data', 'error');
+        }
     });
 }
 
@@ -609,7 +750,7 @@ function switchPage(pageName) {
 // Update connection status
 function updateConnectionStatus(connected) {
     const statusIndicator = document.getElementById('connectionStatus');
-    const statusText = statusIndicator.querySelector('.status-text');
+    const statusText = statusIndicator.querySelector('span:last-child');
     
     if (connected) {
         statusIndicator.classList.add('connected');
@@ -683,6 +824,7 @@ function setupSettingsPage() {
     const scanPortsBtn = document.getElementById('scanPortsBtn');
     const testConnectionBtn = document.getElementById('testConnectionBtn');
     const updateConfigBtn = document.getElementById('updateConfigBtn');
+    const updateRefLinesBtn = document.getElementById('updateRefLinesBtn');
     const portSelect = document.getElementById('portSelect');
     
     // Scan for available ports
@@ -718,6 +860,26 @@ function setupSettingsPage() {
             
             socket.emit('update_config', config);
             showNotification('Updating configuration...', 'info');
+        });
+    }
+    
+    // Update reference lines
+    if (updateRefLinesBtn) {
+        updateRefLinesBtn.addEventListener('click', () => {
+            saveReferenceLines();
+        });
+    }
+    
+    // Reference line input listeners
+    for (let i = 1; i <= 4; i++) {
+        ['Enabled', 'Label', 'Value', 'Color'].forEach(prop => {
+            const elem = document.getElementById(`refLine${i}${prop}`);
+            if (elem) {
+                elem.addEventListener('change', () => {
+                    // Auto-update chart when values change
+                    updateChartReferenceLines();
+                });
+            }
         });
     }
     
@@ -830,3 +992,328 @@ socket.on('config', (config) => {
         }
     }
 });
+
+// Analysis functions
+function analyzeHistoricalData() {
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const analysisStatus = document.getElementById('analysisStatus');
+    
+    analyzeBtn.disabled = true;
+    analysisStatus.textContent = '🔄 Analyzing data...';
+    analysisStatus.style.color = '#f59e0b';
+    
+    socket.emit('analyze_measurements', {
+        threshold: -8.0,  // S11 threshold to detect measurement
+        min_duration: 5   // Minimum points for a valid period
+    });
+}
+
+socket.on('analysis_result', (result) => {
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const analysisStatus = document.getElementById('analysisStatus');
+    
+    analyzeBtn.disabled = false;
+    
+    if (!result.success) {
+        analysisStatus.textContent = '⚠️ ' + result.message;
+        analysisStatus.style.color = '#ef4444';
+        return;
+    }
+    
+    analysisStatus.textContent = `✓ Analysis complete: ${result.periods.length} period(s) detected`;
+    analysisStatus.style.color = '#10b981';
+    
+    // Display results
+    displayAnalysisResults(result);
+});
+
+function displayAnalysisResults(result) {
+    // Display periods
+    const periodsContainer = document.getElementById('periodsContainer');
+    periodsContainer.innerHTML = '';
+    
+    result.periods.forEach(period => {
+        const periodCard = document.createElement('div');
+        periodCard.className = 'period-card';
+        periodCard.innerHTML = `
+            <div class="period-header">
+                <h4>Period ${period.id}</h4>
+                <span class="period-time">${formatTimeAgo(period.time_ago)}</span>
+            </div>
+            <div class="period-stats">
+                <div class="period-stat">
+                    <span class="stat-label">Duration</span>
+                    <span class="stat-value">${period.duration.toFixed(1)}s</span>
+                </div>
+                <div class="period-stat">
+                    <span class="stat-label">Points</span>
+                    <span class="stat-value">${period.num_points}</span>
+                </div>
+                <div class="period-stat">
+                    <span class="stat-label">S11 RMS</span>
+                    <span class="stat-value">${period.s11_rms.toFixed(2)} dB</span>
+                </div>
+                <div class="period-stat">
+                    <span class="stat-label">S21 RMS</span>
+                    <span class="stat-value">${period.s21_rms.toFixed(2)} dB</span>
+                </div>
+                <div class="period-stat">
+                    <span class="stat-label">S11 Range</span>
+                    <span class="stat-value">${period.s11_range.toFixed(2)} dB</span>
+                </div>
+                <div class="period-stat">
+                    <span class="stat-label">S21 Range</span>
+                    <span class="stat-value">${period.s21_range.toFixed(2)} dB</span>
+                </div>
+            </div>
+        `;
+        periodsContainer.appendChild(periodCard);
+    });
+    
+    // Display comparisons
+    const comparisonsContainer = document.getElementById('comparisonsContainer');
+    comparisonsContainer.innerHTML = '';
+    
+    if (result.comparisons.length === 0) {
+        comparisonsContainer.innerHTML = '<div class="no-data">Need at least 2 periods for comparison</div>';
+    } else {
+        result.comparisons.forEach(comp => {
+            const compCard = document.createElement('div');
+            compCard.className = `comparison-card ${comp.is_same ? 'same-sample' : 'different-sample'}`;
+            compCard.innerHTML = `
+                <div class="comparison-header">
+                    <h4>Period ${comp.period_1} vs Period ${comp.period_2}</h4>
+                    <span class="similarity-badge ${comp.is_same ? 'badge-success' : 'badge-warning'}">
+                        ${comp.similarity.toFixed(1)}% ${comp.is_same ? '✓ Same' : '⚠ Different'}
+                    </span>
+                </div>
+                <div class="comparison-details">
+                    <div class="comparison-row">
+                        <span class="detail-label">S11 RMS:</span>
+                        <span class="detail-value">${comp.s11_rms_1.toFixed(2)} dB vs ${comp.s11_rms_2.toFixed(2)} dB (Δ ${comp.s11_diff.toFixed(2)} dB)</span>
+                    </div>
+                    <div class="comparison-row">
+                        <span class="detail-label">S21 RMS:</span>
+                        <span class="detail-value">${comp.s21_rms_1.toFixed(2)} dB vs ${comp.s21_rms_2.toFixed(2)} dB (Δ ${comp.s21_diff.toFixed(2)} dB)</span>
+                    </div>
+                </div>
+            `;
+            comparisonsContainer.appendChild(compCard);
+        });
+    }
+    
+    // Update summary
+    document.getElementById('totalPeriods').textContent = result.summary.total_periods;
+    document.getElementById('totalComparisons').textContent = result.summary.total_comparisons;
+    document.getElementById('sameSampleCount').textContent = result.summary.same_sample_count;
+    document.getElementById('avgSimilarity').textContent = result.summary.avg_similarity.toFixed(1) + '%';
+}
+
+function formatTimeAgo(seconds) {
+    if (seconds < 60) {
+        return `${Math.round(seconds)}s ago`;
+    } else if (seconds < 3600) {
+        return `${Math.round(seconds / 60)}m ago`;
+    } else {
+        return `${Math.round(seconds / 3600)}h ago`;
+    }
+}
+
+// Save measurement functions
+function saveCurrentMeasurement() {
+    if (!currentMeasurement) {
+        showNotification('No measurement data available to save', 'warning');
+        return;
+    }
+    
+    const saveBtn = document.getElementById('saveDataBtn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '💾 Saving...';
+    
+    socket.emit('save_measurement', currentMeasurement);
+}
+
+socket.on('last_saved_info', (info) => {
+    if (info && info.timestamp) {
+        updateLastSavedDisplay(info);
+    }
+});
+
+function updateLastSavedDisplay(info) {
+    const lastSavedTime = document.getElementById('lastSavedTime');
+    if (info && info.timestamp) {
+        const timeStr = new Date(info.timestamp).toLocaleString();
+        lastSavedTime.textContent = timeStr;
+        lastSavedTime.title = `Sweep #${info.sweep_count} - S11: ${info.s11_rms.toFixed(2)} dB, S21: ${info.s21_rms.toFixed(2)} dB`;
+    }
+}
+
+function showNotification(message, type = 'info') {
+    const prefix = type === 'success' ? '✓' : type === 'error' ? '✗' : type === 'warning' ? '⚠' : 'ℹ';
+    console.log(`${prefix} ${message}`);
+    
+    // Create toast notification
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    const icons = {
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+    };
+    
+    const titles = {
+        success: 'Success',
+        error: 'Error',
+        warning: 'Warning',
+        info: 'Info'
+    };
+    
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || icons.info}</div>
+        <div class="toast-content">
+            <div class="toast-title">${titles[type] || titles.info}</div>
+            <div class="toast-message">${message}</div>
+        </div>
+        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => {
+            if (toast.parentElement) {
+                toast.remove();
+            }
+        }, 300);
+    }, 5000);
+}
+
+// Request last saved info on load
+socket.on('connect', () => {
+    socket.emit('get_last_saved');
+});
+
+// Historical Data functions
+function queryHistoricalData() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    const limit = parseInt(document.getElementById('limitRecords').value);
+    
+    const loadingMsg = document.getElementById('historyLoadingMsg');
+    const errorMsg = document.getElementById('historyErrorMsg');
+    const queryBtn = document.getElementById('queryDataBtn');
+    
+    loadingMsg.style.display = 'block';
+    errorMsg.style.display = 'none';
+    queryBtn.disabled = true;
+    queryBtn.textContent = '⏳ Querying...';
+    
+    socket.emit('query_historical_data', {
+        start_date: startDate || null,
+        end_date: endDate || null,
+        limit: limit
+    });
+}
+
+socket.on('historical_data_result', (result) => {
+    const loadingMsg = document.getElementById('historyLoadingMsg');
+    const errorMsg = document.getElementById('historyErrorMsg');
+    const queryBtn = document.getElementById('queryDataBtn');
+    const recordCount = document.getElementById('recordCount');
+    const tableBody = document.getElementById('historyTableBody');
+    
+    loadingMsg.style.display = 'none';
+    queryBtn.disabled = false;
+    queryBtn.textContent = '🔍 Query Data';
+    
+    if (result.success) {
+        recordCount.textContent = `${result.count} records`;
+        
+        if (result.data && result.data.length > 0) {
+            tableBody.innerHTML = '';
+            result.data.forEach(row => {
+                const tr = document.createElement('tr');
+                const timestamp = new Date(row.timestamp).toLocaleString();
+                
+                tr.innerHTML = `
+                    <td>${timestamp}</td>
+                    <td>${row.sweep_count}</td>
+                    <td>${row.s11_rms}</td>
+                    <td>${row.s11_min}</td>
+                    <td>${row.s11_max}</td>
+                    <td>${row.s21_rms}</td>
+                    <td>${row.s21_min}</td>
+                    <td>${row.s21_max}</td>
+                    <td>
+                        <button class="btn-small btn-view" onclick="viewDetails('${row.timestamp}')" title="View Details">👁️</button>
+                    </td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        } else {
+            tableBody.innerHTML = '<tr><td colspan="9" class="no-data">No records found for the selected criteria.</td></tr>';
+        }
+    } else {
+        errorMsg.textContent = '❌ ' + result.message;
+        errorMsg.style.display = 'block';
+        recordCount.textContent = '0 records';
+        tableBody.innerHTML = '<tr><td colspan="9" class="no-data">Query failed. Check database connection.</td></tr>';
+    }
+});
+
+function exportToCsv() {
+    const table = document.getElementById('historyTable');
+    const rows = table.querySelectorAll('tr');
+    
+    if (rows.length <= 1) {
+        alert('No data to export');
+        return;
+    }
+    
+    let csv = [];
+    
+    // Get headers
+    const headers = [];
+    rows[0].querySelectorAll('th').forEach(th => {
+        if (th.textContent !== 'Actions') {
+            headers.push(th.textContent);
+        }
+    });
+    csv.push(headers.join(','));
+    
+    // Get data rows
+    for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const cells = row.querySelectorAll('td');
+        
+        if (cells.length > 1) {
+            const rowData = [];
+            for (let j = 0; j < cells.length - 1; j++) {
+                rowData.push(`"${cells[j].textContent}"`);
+            }
+            csv.push(rowData.join(','));
+        }
+    }
+    
+    // Download
+    const csvContent = csv.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `historical_data_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+}
+
+// Reset Scan UI
+function resetScanUI() {
+    document.getElementById('scanProgressSection').style.display = 'none';
+    document.getElementById('startScanBtn').disabled = false;
+    scanCollectedData = [];
+}

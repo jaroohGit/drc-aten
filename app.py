@@ -1,6 +1,6 @@
 """
 Flask Web Dashboard for NanoVNA Real-time Monitoring
-WebSocket-based real-time chart updates
+WebSocket-based real-time chart updates with TimescaleDB storage
 """
 
 from flask import Flask, render_template
@@ -12,11 +12,40 @@ import time
 import math
 from datetime import datetime
 import threading
+import os
+
+# Try to import psycopg2, but make it optional
+try:
+    import psycopg2
+    from psycopg2.extras import execute_values
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    print("⚠ psycopg2 not installed - running without database support")
+    print("  Install: pip install psycopg2-binary")
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'nanovna-secret-key'
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Database Configuration
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': os.getenv('DB_PORT', '5433'),
+    'database': os.getenv('DB_NAME', 'nanovna_db'),
+    'user': os.getenv('DB_USER', 'postgres'),
+    'password': os.getenv('DB_PASSWORD', 'postgres')
+}
+
+# Global database connection
+db_conn = None
+last_saved_data = {
+    'timestamp': None,
+    'sweep_count': None,
+    's11_rms': None,
+    's21_rms': None
+}
 
 # NanoVNA Configuration
 PORT = "COM4"
@@ -51,6 +80,156 @@ historical_data = {
 MAX_HISTORY_POINTS = 300  # 5 minutes at 1 second interval
 
 
+def init_database():
+    """Initialize TimescaleDB connection and create tables"""
+    global db_conn
+    
+    if not DB_AVAILABLE:
+        print("⚠ Database module not available - skipping database initialization")
+        return False
+    
+    try:
+        db_conn = psycopg2.connect(**DB_CONFIG)
+        cursor = db_conn.cursor()
+        
+        # Create measurements table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS measurements (
+                time TIMESTAMPTZ NOT NULL,
+                sweep_count INTEGER,
+                frequency DOUBLE PRECISION,
+                s11_magnitude DOUBLE PRECISION,
+                s11_db DOUBLE PRECISION,
+                s11_phase DOUBLE PRECISION,
+                s11_real DOUBLE PRECISION,
+                s11_imag DOUBLE PRECISION,
+                s21_magnitude DOUBLE PRECISION,
+                s21_db DOUBLE PRECISION,
+                s21_phase DOUBLE PRECISION,
+                s21_real DOUBLE PRECISION,
+                s21_imag DOUBLE PRECISION
+            );
+        """)
+        
+        # Create index for time-based queries on regular table
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_measurements_time 
+            ON measurements (time DESC);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_measurements_sweep 
+            ON measurements (sweep_count);
+        """)
+        print("  ✓ Measurements table created with indexes")
+        
+        # Create summary table for quick access
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS measurement_summary (
+                time TIMESTAMPTZ NOT NULL PRIMARY KEY,
+                sweep_count INTEGER,
+                s11_rms DOUBLE PRECISION,
+                s11_max DOUBLE PRECISION,
+                s11_min DOUBLE PRECISION,
+                s21_rms DOUBLE PRECISION,
+                s21_max DOUBLE PRECISION,
+                s21_min DOUBLE PRECISION,
+                signal_quality DOUBLE PRECISION
+            );
+        """)
+        print("  ✓ Summary table created")
+        
+        db_conn.commit()
+        cursor.close()
+        print("✓ Database initialized successfully (PostgreSQL)")
+        return True
+    except Exception as e:
+        print(f"✗ Database initialization error: {e}")
+        print("  Note: Make sure TimescaleDB is installed and running")
+        db_conn = None
+        return False
+
+
+def save_measurement_to_db(data):
+    """Save measurement data to TimescaleDB"""
+    global db_conn, last_saved_data
+    
+    if not db_conn:
+        return {'success': False, 'message': 'Database not connected'}
+    
+    try:
+        cursor = db_conn.cursor()
+        timestamp = datetime.now()
+        
+        # Prepare data for batch insert
+        measurement_rows = []
+        for i, s11_point in enumerate(data['s11_data']):
+            s21_point = data['s21_data'][i] if i < len(data['s21_data']) else {}
+            
+            measurement_rows.append((
+                timestamp,
+                data['sweep_count'],
+                s11_point['frequency'],
+                s11_point['magnitude'],
+                s11_point['db'],
+                s11_point['phase'],
+                s11_point['real'],
+                s11_point['imag'],
+                s21_point.get('magnitude'),
+                s21_point.get('db'),
+                s21_point.get('phase'),
+                s21_point.get('real'),
+                s21_point.get('imag')
+            ))
+        
+        # Batch insert measurements
+        execute_values(cursor, """
+            INSERT INTO measurements 
+            (time, sweep_count, frequency, s11_magnitude, s11_db, s11_phase, 
+             s11_real, s11_imag, s21_magnitude, s21_db, s21_phase, s21_real, s21_imag)
+            VALUES %s
+        """, measurement_rows)
+        
+        # Insert summary
+        cursor.execute("""
+            INSERT INTO measurement_summary 
+            (time, sweep_count, s11_rms, s11_max, s11_min, s21_rms, s21_max, s21_min, signal_quality)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            timestamp,
+            data['sweep_count'],
+            data['summary']['avg_db'],
+            data['summary']['max_db'],
+            data['summary']['min_db'],
+            data['summary']['s21_avg_db'],
+            data['summary']['s21_max_db'],
+            data['summary']['s21_min_db'],
+            data['connection_status']['signal_quality']
+        ))
+        
+        db_conn.commit()
+        cursor.close()
+        
+        # Update last saved info
+        last_saved_data = {
+            'timestamp': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'sweep_count': data['sweep_count'],
+            's11_rms': data['summary']['avg_db'],
+            's21_rms': data['summary']['s21_avg_db']
+        }
+        
+        return {
+            'success': True,
+            'message': 'Data saved successfully',
+            'last_saved': last_saved_data
+        }
+        
+    except Exception as e:
+        print(f"Save error: {e}")
+        if db_conn:
+            db_conn.rollback()
+        return {'success': False, 'message': f'Save error: {str(e)}'}
+
+
 def get_available_ports():
     """Get list of available COM ports"""
     ports = []
@@ -63,6 +242,28 @@ def get_available_ports():
     return ports
 
 
+def calculate_rms(data_points, key='db'):
+    """Calculate RMS (Root Mean Square) for better RF measurement consistency
+    RMS = sqrt(mean(x^2)) - More stable than arithmetic mean for RF signals
+    
+    For dB values: RMS_dB = 10 * log10(mean(10^(dB/10)))
+    This converts dB to linear (power), averages, then converts back to dB
+    """
+    try:
+        if not data_points or len(data_points) == 0:
+            return 0.0
+        
+        # Convert dB to linear scale (power), calculate mean, convert back to dB
+        linear_values = [10 ** (d[key] / 10) for d in data_points]
+        mean_linear = sum(linear_values) / len(linear_values)
+        rms_db = 10 * math.log10(mean_linear) if mean_linear > 0 else -100
+        
+        return rms_db
+    except Exception as e:
+        print(f"RMS calculation error: {e}")
+        return 0.0
+
+
 def calculate_signal_quality(s11_data, s21_data):
     """Calculate signal quality based on data consistency"""
     try:
@@ -72,9 +273,9 @@ def calculate_signal_quality(s11_data, s21_data):
         # Check data completeness
         completeness = (len(s11_data) / POINTS) * 40
         
-        # Check S11 signal strength (better signal = closer to 0 dB)
-        s11_avg = sum(d['db'] for d in s11_data) / len(s11_data)
-        signal_strength = max(0, min(30, (s11_avg + 50) / 50 * 30))
+        # Check S11 signal strength (better signal = closer to 0 dB) - use RMS
+        s11_rms = calculate_rms(s11_data)
+        signal_strength = max(0, min(30, (s11_rms + 50) / 50 * 30))
         
         # Check S21 availability
         s21_quality = 30 if s21_data and len(s21_data) >= POINTS else 0
@@ -83,6 +284,154 @@ def calculate_signal_quality(s11_data, s21_data):
         return min(100, max(0, quality))
     except:
         return 0
+
+
+def detect_measurement_periods(historical_data, threshold=-8.0, min_duration=5):
+    """Detect measurement periods from historical data
+    Filters out spikes (no sample) and identifies actual measurement windows"""
+    
+    if not historical_data['timestamps'] or len(historical_data['timestamps']) < min_duration:
+        return []
+    
+    periods = []
+    current_period = None
+    
+    for i, (timestamp, s11_avg) in enumerate(zip(
+        historical_data['timestamps'], 
+        historical_data['s11_avg']
+    )):
+        is_measuring = s11_avg < threshold  # Below threshold = measuring
+        
+        if is_measuring:
+            if current_period is None:
+                # Start new measurement period
+                current_period = {
+                    'start_idx': i,
+                    'start_time': timestamp,
+                    'data_points': []
+                }
+            current_period['data_points'].append({
+                'timestamp': timestamp,
+                's11_avg': s11_avg,
+                's11_max': historical_data['s11_max'][i],
+                's11_min': historical_data['s11_min'][i],
+                's21_avg': historical_data['s21_avg'][i],
+                's21_max': historical_data['s21_max'][i],
+                's21_min': historical_data['s21_min'][i],
+            })
+        else:
+            if current_period and len(current_period['data_points']) >= min_duration:
+                # End measurement period
+                current_period['end_idx'] = i - 1
+                current_period['end_time'] = historical_data['timestamps'][i-1]
+                current_period['duration'] = current_period['end_time'] - current_period['start_time']
+                periods.append(current_period)
+            current_period = None
+    
+    # Handle last period
+    if current_period and len(current_period['data_points']) >= min_duration:
+        current_period['end_idx'] = len(historical_data['timestamps']) - 1
+        current_period['end_time'] = historical_data['timestamps'][-1]
+        current_period['duration'] = current_period['end_time'] - current_period['start_time']
+        periods.append(current_period)
+    
+    return periods
+
+
+def calculate_rms_from_values(db_values):
+    """Calculate RMS from dB values directly"""
+    if not db_values:
+        return 0.0
+    try:
+        linear_values = [10 ** (db / 10) for db in db_values]
+        mean_linear = sum(linear_values) / len(linear_values)
+        return 10 * math.log10(mean_linear) if mean_linear > 0 else -100
+    except:
+        return 0.0
+
+
+def calculate_period_fingerprint(period_data):
+    """Calculate fingerprint for a measurement period"""
+    try:
+        s11_values = [d['s11_avg'] for d in period_data['data_points']]
+        s21_values = [d['s21_avg'] for d in period_data['data_points']]
+        
+        # Calculate statistics
+        s11_mean = sum(s11_values) / len(s11_values)
+        s21_mean = sum(s21_values) / len(s21_values)
+        
+        s11_variance = sum((x - s11_mean) ** 2 for x in s11_values) / len(s11_values)
+        s21_variance = sum((x - s21_mean) ** 2 for x in s21_values) / len(s21_values)
+        
+        fingerprint = {
+            'duration': period_data['duration'],
+            'num_points': len(period_data['data_points']),
+            's11_rms': calculate_rms_from_values(s11_values),
+            's21_rms': calculate_rms_from_values(s21_values),
+            's11_std': math.sqrt(s11_variance),
+            's21_std': math.sqrt(s21_variance),
+            's11_range': max(s11_values) - min(s11_values),
+            's21_range': max(s21_values) - min(s21_values),
+            's11_min': min(s11_values),
+            's11_max': max(s11_values),
+            's21_min': min(s21_values),
+            's21_max': max(s21_values),
+        }
+        
+        return fingerprint
+    except Exception as e:
+        print(f"Fingerprint calculation error: {e}")
+        return None
+
+
+def compare_measurements(periods):
+    """Compare all measurement periods"""
+    if len(periods) < 2:
+        return []
+    
+    fingerprints = []
+    for p in periods:
+        fp = calculate_period_fingerprint(p)
+        if fp:
+            fingerprints.append(fp)
+    
+    if len(fingerprints) < 2:
+        return []
+    
+    comparisons = []
+    
+    for i in range(len(fingerprints)):
+        for j in range(i + 1, len(fingerprints)):
+            fp1, fp2 = fingerprints[i], fingerprints[j]
+            
+            # Calculate differences
+            s11_diff = abs(fp1['s11_rms'] - fp2['s11_rms'])
+            s21_diff = abs(fp1['s21_rms'] - fp2['s21_rms'])
+            std_diff = abs(fp1['s11_std'] - fp2['s11_std'])
+            
+            # Similarity scores (0-100%)
+            s11_similarity = max(0, 100 - (s11_diff * 10))  # Allow 10dB difference
+            s21_similarity = max(0, 100 - (s21_diff * 10))
+            std_similarity = max(0, 100 - (std_diff * 20))
+            
+            overall_similarity = (s11_similarity * 0.4 + 
+                                s21_similarity * 0.4 + 
+                                std_similarity * 0.2)
+            
+            comparisons.append({
+                'period_1': i + 1,
+                'period_2': j + 1,
+                'similarity': round(overall_similarity, 1),
+                'is_same': overall_similarity > 85,
+                's11_rms_1': round(fp1['s11_rms'], 2),
+                's11_rms_2': round(fp2['s11_rms'], 2),
+                's21_rms_1': round(fp1['s21_rms'], 2),
+                's21_rms_2': round(fp2['s21_rms'], 2),
+                's11_diff': round(s11_diff, 2),
+                's21_diff': round(s21_diff, 2),
+            })
+    
+    return comparisons
 
 
 def connect_nanovna(port=None):
@@ -295,10 +644,10 @@ def sweep_loop():
                 print(f"\n✓ อ่านค่าได้สำเร็จ - Sweep #{sweep_count} [{timestamp}]")
                 print(f"  S11: {len(s11_data)}/{POINTS} points | S21: {len(s21_data)}/{POINTS} points")
                 print(f"  Signal Quality: {signal_quality:.1f}%")
-                print(f"  S11 dB: Min={min(d['db'] for d in s11_data):.2f}, Max={max(d['db'] for d in s11_data):.2f}, Avg={sum(d['db'] for d in s11_data)/len(s11_data):.2f}")
+                print(f"  S11 dB: Min={min(d['db'] for d in s11_data):.2f}, Max={max(d['db'] for d in s11_data):.2f}, RMS={calculate_rms(s11_data):.2f}")
                 
                 if s21_data:
-                    print(f"  S21 dB: Min={min(d['db'] for d in s21_data):.2f}, Max={max(d['db'] for d in s21_data):.2f}, Avg={sum(d['db'] for d in s21_data)/len(s21_data):.2f}")
+                    print(f"  S21 dB: Min={min(d['db'] for d in s21_data):.2f}, Max={max(d['db'] for d in s21_data):.2f}, RMS={calculate_rms(s21_data):.2f}")
                     
                     # ตรวจสอบว่าข้อมูล S21 ต่างจาก S11 หรือไม่
                     s11_first_3 = [(s11_data[i]['real'], s11_data[i]['imag']) for i in range(min(3, len(s11_data)))]
@@ -335,11 +684,11 @@ def sweep_loop():
                     's11_data': s11_data,
                     's21_data': s21_data,
                     'summary': {
-                        'avg_db': sum(d['db'] for d in s11_data) / len(s11_data),
+                        'avg_db': calculate_rms(s11_data),  # Use RMS instead of arithmetic mean
                         'max_db': max(d['db'] for d in s11_data),
                         'min_db': min(d['db'] for d in s11_data),
                         'avg_phase': sum(d['phase'] for d in s11_data) / len(s11_data),
-                        's21_avg_db': sum(d['db'] for d in s21_data) / len(s21_data) if s21_data else 0,
+                        's21_avg_db': calculate_rms(s21_data) if s21_data else 0,  # Use RMS for S21
                         's21_max_db': max(d['db'] for d in s21_data) if s21_data else 0,
                         's21_min_db': min(d['db'] for d in s21_data) if s21_data else 0
                     },
@@ -539,6 +888,175 @@ def handle_get_config():
     emit('config', config)
 
 
+@socketio.on('analyze_measurements')
+def handle_analyze_measurements(data):
+    """Analyze historical data for measurement periods and similarities"""
+    try:
+        threshold = data.get('threshold', -8.0)
+        min_duration = data.get('min_duration', 5)
+        
+        # Detect measurement periods
+        periods = detect_measurement_periods(historical_data, threshold, min_duration)
+        
+        if not periods:
+            emit('analysis_result', {
+                'success': False,
+                'message': 'No measurement periods detected. Try adjusting the threshold or collect more data.'
+            })
+            return
+        
+        # Calculate fingerprints and comparisons
+        comparisons = compare_measurements(periods)
+        
+        # Prepare period summaries
+        period_summaries = []
+        for i, period in enumerate(periods):
+            fp = calculate_period_fingerprint(period)
+            if fp:
+                # Calculate time ago
+                time_ago = time.time() - period['end_time']
+                
+                period_summaries.append({
+                    'id': i + 1,
+                    'start_time': period['start_time'],
+                    'end_time': period['end_time'],
+                    'duration': round(period['duration'], 1),
+                    'time_ago': round(time_ago, 0),
+                    'num_points': fp['num_points'],
+                    's11_rms': fp['s11_rms'],
+                    's21_rms': fp['s21_rms'],
+                    's11_std': fp['s11_std'],
+                    's21_std': fp['s21_std'],
+                    's11_range': fp['s11_range'],
+                    's21_range': fp['s21_range'],
+                    's11_min': fp['s11_min'],
+                    's11_max': fp['s11_max'],
+                    's21_min': fp['s21_min'],
+                    's21_max': fp['s21_max'],
+                })
+        
+        # Calculate summary statistics
+        same_sample_count = sum(1 for c in comparisons if c['is_same'])
+        avg_similarity = sum(c['similarity'] for c in comparisons) / len(comparisons) if comparisons else 0
+        
+        emit('analysis_result', {
+            'success': True,
+            'periods': period_summaries,
+            'comparisons': comparisons,
+            'summary': {
+                'total_periods': len(periods),
+                'total_comparisons': len(comparisons),
+                'same_sample_count': same_sample_count,
+                'avg_similarity': round(avg_similarity, 1)
+            }
+        })
+        
+    except Exception as e:
+        print(f"Analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('analysis_result', {
+            'success': False,
+            'message': f'Analysis error: {str(e)}'
+        })
+
+
+@socketio.on('save_measurement')
+def handle_save_measurement(data):
+    """Save current measurement to database"""
+    result = save_measurement_to_db(data)
+    emit('save_result', result)
+
+
+@socketio.on('get_last_saved')
+def handle_get_last_saved():
+    """Get last saved measurement info"""
+    emit('last_saved_info', last_saved_data)
+
+
+@socketio.on('query_historical_data')
+def handle_query_historical_data(params):
+    """Query historical data from database"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('historical_data_result', {
+            'success': False,
+            'message': 'Database not available. Please configure PostgreSQL/TimescaleDB.'
+        })
+        return
+    
+    try:
+        cursor = db_conn.cursor()
+        
+        start_date = params.get('start_date')
+        end_date = params.get('end_date')
+        limit = params.get('limit', 100)
+        
+        # Build query
+        query = """
+            SELECT 
+                time,
+                sweep_count,
+                s11_rms,
+                s11_min,
+                s11_max,
+                s21_rms,
+                s21_min,
+                s21_max
+            FROM measurement_summary
+        """
+        
+        conditions = []
+        query_params = []
+        
+        if start_date:
+            conditions.append("time >= %s")
+            query_params.append(start_date)
+        
+        if end_date:
+            conditions.append("time <= %s")
+            query_params.append(end_date)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY time DESC LIMIT %s"
+        query_params.append(limit)
+        
+        cursor.execute(query, query_params)
+        rows = cursor.fetchall()
+        
+        # Format results
+        results = []
+        for row in rows:
+            results.append({
+                'timestamp': row[0].isoformat(),
+                'sweep_count': row[1],
+                's11_rms': round(row[2], 2),
+                's11_min': round(row[3], 2),
+                's11_max': round(row[4], 2),
+                's21_rms': round(row[5], 2),
+                's21_min': round(row[6], 2),
+                's21_max': round(row[7], 2)
+            })
+        
+        cursor.close()
+        
+        emit('historical_data_result', {
+            'success': True,
+            'data': results,
+            'count': len(results)
+        })
+        
+    except Exception as e:
+        print(f"Query error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('historical_data_result', {
+            'success': False,
+            'message': f'Query error: {str(e)}'
+        })
+
+
 if __name__ == '__main__':
     print("="*60)
     print("DRC Online - Premeir System Engineering Co.ltd")
@@ -548,6 +1066,14 @@ if __name__ == '__main__':
     print(f"Points: {POINTS}")
     print(f"Interval: {INTERVAL*1000:.0f} ms")
     print("="*60)
+    
+    # Initialize database
+    print("\nInitializing TimescaleDB connection...")
+    if init_database():
+        print("✓ Database ready")
+    else:
+        print("⚠ Running without database (data will not be saved)")
+    
     print("\nStarting server at http://localhost:5000")
     print("Open your browser and navigate to the URL above")
     print("="*60)
