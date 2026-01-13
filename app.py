@@ -133,10 +133,40 @@ def init_database():
                 s21_rms DOUBLE PRECISION,
                 s21_max DOUBLE PRECISION,
                 s21_min DOUBLE PRECISION,
-                signal_quality DOUBLE PRECISION
+                signal_quality DOUBLE PRECISION,
+                batch_id VARCHAR(50)
             );
         """)
         print("  ✓ Summary table created")
+        
+        # Add batch_id column if it doesn't exist (for existing databases)
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='measurement_summary' AND column_name='batch_id'
+                ) THEN
+                    ALTER TABLE measurement_summary ADD COLUMN batch_id VARCHAR(50);
+                END IF;
+            END $$;
+        """)
+        
+        # Create DRC batch settings table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS drc_batch_settings (
+                id SERIAL PRIMARY KEY,
+                batch_id VARCHAR(50) UNIQUE NOT NULL,
+                s21_low_db REAL NOT NULL,
+                drc1_percent REAL NOT NULL,
+                s21_high_db REAL NOT NULL,
+                drc2_percent REAL NOT NULL,
+                slope_m REAL NOT NULL,
+                intercept_b REAL NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        print("  ✓ DRC batch settings table created")
         
         db_conn.commit()
         cursor.close()
@@ -159,6 +189,9 @@ def save_measurement_to_db(data):
     try:
         cursor = db_conn.cursor()
         timestamp = datetime.now()
+        
+        # Generate batch_id using timestamp (yymmddhhmmss)
+        batch_id = timestamp.strftime('%y%m%d%H%M%S')
         
         # Prepare data for batch insert
         measurement_rows = []
@@ -192,8 +225,8 @@ def save_measurement_to_db(data):
         # Insert summary
         cursor.execute("""
             INSERT INTO measurement_summary 
-            (time, sweep_count, s11_rms, s11_max, s11_min, s21_rms, s21_max, s21_min, signal_quality)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (time, sweep_count, s11_rms, s11_max, s11_min, s21_rms, s21_max, s21_min, signal_quality, batch_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             timestamp,
             data['sweep_count'],
@@ -203,7 +236,8 @@ def save_measurement_to_db(data):
             data['summary']['s21_avg_db'],
             data['summary']['s21_max_db'],
             data['summary']['s21_min_db'],
-            data['connection_status']['signal_quality']
+            data['connection_status']['signal_quality'],
+            batch_id
         ))
         
         db_conn.commit()
@@ -214,13 +248,15 @@ def save_measurement_to_db(data):
             'timestamp': timestamp.strftime('%Y-%m-%d %H:%M:%S'),
             'sweep_count': data['sweep_count'],
             's11_rms': data['summary']['avg_db'],
-            's21_rms': data['summary']['s21_avg_db']
+            's21_rms': data['summary']['s21_avg_db'],
+            'batch_id': batch_id
         }
         
         return {
             'success': True,
-            'message': 'Data saved successfully',
-            'last_saved': last_saved_data
+            'message': f'Data saved successfully (Batch: {batch_id})',
+            'last_saved': last_saved_data,
+            'batch_id': batch_id
         }
         
     except Exception as e:
@@ -974,6 +1010,192 @@ def handle_get_last_saved():
     emit('last_saved_info', last_saved_data)
 
 
+@socketio.on('save_drc_settings')
+def handle_save_drc_settings(data):
+    """
+    Save DRC batch settings with linear regression calculation
+    
+    Business Logic:
+    - DRC% = slope_m * S21_RMS(dB) + intercept_b
+    - slope_m = (DRC2% - DRC1%) / (S21_high_dB - S21_low_dB)
+    - intercept_b = DRC1% - slope_m * S21_low_dB
+    """
+    if not DB_AVAILABLE or not db_conn:
+        emit('drc_save_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        s21_low_db = float(data.get('s21_low_db'))
+        drc1_percent = float(data.get('drc1_percent'))
+        s21_high_db = float(data.get('s21_high_db'))
+        drc2_percent = float(data.get('drc2_percent'))
+        
+        # Validation
+        if s21_high_db == s21_low_db:
+            emit('drc_save_result', {
+                'success': False,
+                'message': 'S21 High dB must be different from S21 Low dB'
+            })
+            return
+        
+        if not (0 <= drc1_percent <= 100) or not (0 <= drc2_percent <= 100):
+            emit('drc_save_result', {
+                'success': False,
+                'message': 'DRC percentages must be between 0 and 100'
+            })
+            return
+        
+        # Calculate linear regression coefficients
+        slope_m = (drc2_percent - drc1_percent) / (s21_high_db - s21_low_db)
+        intercept_b = drc1_percent - slope_m * s21_low_db
+        
+        cursor = db_conn.cursor()
+        
+        # Auto-generate batch_id using timestamp (yymmddhhmmss)
+        from datetime import datetime
+        batch_id = datetime.now().strftime('%y%m%d%H%M%S')
+        
+        # Insert DRC settings (no conflict handling, always new record)
+        cursor.execute("""
+            INSERT INTO drc_batch_settings 
+            (batch_id, s21_low_db, drc1_percent, s21_high_db, drc2_percent, slope_m, intercept_b)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (batch_id, s21_low_db, drc1_percent, s21_high_db, drc2_percent, slope_m, intercept_b))
+        
+        result = cursor.fetchone()
+        db_conn.commit()
+        cursor.close()
+        
+        emit('drc_save_result', {
+            'success': True,
+            'message': f'DRC settings saved successfully for {batch_id}',
+            'batch_id': batch_id,
+            's21_low_db': s21_low_db,
+            'drc1_percent': drc1_percent,
+            's21_high_db': s21_high_db,
+            'drc2_percent': drc2_percent,
+            'slope_m': round(slope_m, 6),
+            'intercept_b': round(intercept_b, 6),
+            'created_at': result[1].isoformat() if result else None
+        })
+        
+    except Exception as e:
+        db_conn.rollback()
+        print(f"DRC save error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('drc_save_result', {
+            'success': False,
+            'message': f'Error saving DRC settings: {str(e)}'
+        })
+
+
+@socketio.on('get_drc_settings')
+def handle_get_drc_settings(data):
+    """Get DRC settings for a specific batch or latest"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('drc_settings_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        cursor = db_conn.cursor()
+        batch_id = data.get('batch_id') if data else None
+        
+        if batch_id:
+            # Get specific batch
+            cursor.execute("""
+                SELECT batch_id, s21_low_db, drc1_percent, s21_high_db, drc2_percent, 
+                       slope_m, intercept_b, created_at
+                FROM drc_batch_settings
+                WHERE batch_id = %s
+            """, (batch_id,))
+        else:
+            # Get latest batch
+            cursor.execute("""
+                SELECT batch_id, s21_low_db, drc1_percent, s21_high_db, drc2_percent, 
+                       slope_m, intercept_b, created_at
+                FROM drc_batch_settings
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+        
+        row = cursor.fetchone()
+        cursor.close()
+        
+        if row:
+            emit('drc_settings_result', {
+                'success': True,
+                'settings': {
+                    'batch_id': row[0],
+                    's21_low_db': row[1],
+                    'drc1_percent': row[2],
+                    's21_high_db': row[3],
+                    'drc2_percent': row[4],
+                    'slope_m': row[5],
+                    'intercept_b': row[6],
+                    'created_at': row[7].isoformat()
+                }
+            })
+        else:
+            emit('drc_settings_result', {
+                'success': False,
+                'message': 'No DRC settings found'
+            })
+        
+    except Exception as e:
+        print(f"DRC get error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('drc_settings_result', {
+            'success': False,
+            'message': f'Error retrieving DRC settings: {str(e)}'
+        })
+
+
+@socketio.on('calculate_drc')
+def handle_calculate_drc(data):
+    """
+    Calculate DRC percentage from S21 RMS using stored settings
+    
+    Formula: DRC% = slope_m * S21_RMS(dB) + intercept_b
+    Clamped to DRC1-DRC2 range
+    """
+    try:
+        s21_rms_db = float(data.get('s21_rms_db'))
+        slope_m = float(data.get('slope_m'))
+        intercept_b = float(data.get('intercept_b'))
+        drc1_percent = float(data.get('drc1_percent', 0))
+        drc2_percent = float(data.get('drc2_percent', 100))
+        
+        # Calculate DRC
+        drc_percent = slope_m * s21_rms_db + intercept_b
+        
+        # Clamp to valid range
+        min_drc = min(drc1_percent, drc2_percent)
+        max_drc = max(drc1_percent, drc2_percent)
+        drc_percent = max(min_drc, min(max_drc, drc_percent))
+        
+        emit('drc_calculation_result', {
+            'success': True,
+            'drc_percent': round(drc_percent, 2),
+            's21_rms_db': round(s21_rms_db, 2)
+        })
+        
+    except Exception as e:
+        print(f"DRC calculation error: {e}")
+        emit('drc_calculation_result', {
+            'success': False,
+            'message': f'Error calculating DRC: {str(e)}'
+        })
+
+
 @socketio.on('query_historical_data')
 def handle_query_historical_data(params):
     """Query historical data from database"""
@@ -1001,7 +1223,8 @@ def handle_query_historical_data(params):
                 s11_max,
                 s21_rms,
                 s21_min,
-                s21_max
+                s21_max,
+                batch_id
             FROM measurement_summary
         """
         
@@ -1025,10 +1248,19 @@ def handle_query_historical_data(params):
         cursor.execute(query, query_params)
         rows = cursor.fetchall()
         
+        # Get latest DRC settings for calculation
+        cursor.execute("""
+            SELECT slope_m, intercept_b, drc1_percent, drc2_percent
+            FROM drc_batch_settings
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        drc_settings = cursor.fetchone()
+        
         # Format results
         results = []
         for row in rows:
-            results.append({
+            result_row = {
                 'timestamp': row[0].isoformat(),
                 'sweep_count': row[1],
                 's11_rms': round(row[2], 2),
@@ -1036,8 +1268,23 @@ def handle_query_historical_data(params):
                 's11_max': round(row[4], 2),
                 's21_rms': round(row[5], 2),
                 's21_min': round(row[6], 2),
-                's21_max': round(row[7], 2)
-            })
+                's21_max': round(row[7], 2),
+                'batch_id': row[8] if row[8] else 'N/A'
+            }
+            
+            # Calculate DRC if settings available
+            if drc_settings and row[5] is not None:
+                slope_m, intercept_b, drc1_percent, drc2_percent = drc_settings
+                drc_value = slope_m * row[5] + intercept_b
+                # Clamp to valid range
+                min_drc = min(drc1_percent, drc2_percent)
+                max_drc = max(drc1_percent, drc2_percent)
+                drc_value = max(min_drc, min(max_drc, drc_value))
+                result_row['drc_percent'] = round(drc_value, 2)
+            else:
+                result_row['drc_percent'] = None
+            
+            results.append(result_row)
         
         cursor.close()
         

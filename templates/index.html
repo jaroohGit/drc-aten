@@ -149,6 +149,16 @@ cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
+                
+                <!-- DRC Result Card -->
+                <div class="stat-card drc-card" id="drcResultCard" style="display: none;">
+                    <div class="stat-icon">🎯</div>
+                    <div class="stat-info">
+                        <div class="stat-label" id="drcBatchIdDisplay">Batch: --</div>
+                        <div class="stat-value drc-stat-value" id="drcValueDisplay">--%</div>
+                        <div class="stat-subtitle" id="drcFormulaDisplay" style="font-size: 0.7em; color: #6b7280; margin-top: 4px;">DRC% = m × S21 + b</div>
+                    </div>
+                </div>
             </div>
             <!-- Scan Progress Section -->
             <div id="scanProgressSection" class="scan-progress-section" style="display: none;">
@@ -202,6 +212,18 @@ cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
                         </div>
                     </div>
                     <button class="btn btn-danger" id="cancelScanBtn">⏹ Cancel Scan</button>
+                </div>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-card" style="grid-column: 1 / -1;">
+                    <div class="chart-header">
+                        <h3>Historical Data - Average, Max, Min (Last 5 Minutes)</h3>
+                        <span class="chart-subtitle">Time Series View</span>
+                    </div>
+                    <div class="chart-wrapper" style="height: 320px;">
+                        <canvas id="historicalChart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -222,18 +244,6 @@ cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
                     </div>
                     <div class="chart-wrapper">
                         <canvas id="s21Chart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <div class="charts-container">
-                <div class="chart-card" style="grid-column: 1 / -1;">
-                    <div class="chart-header">
-                        <h3>Historical Data - Average, Max, Min (Last 5 Minutes)</h3>
-                        <span class="chart-subtitle">Time Series View</span>
-                    </div>
-                    <div class="chart-wrapper" style="height: 400px;">
-                        <canvas id="historicalChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -417,6 +427,55 @@ cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
                     
                     <button class="btn btn-primary" id="updateRefLinesBtn">💾 Update Reference Lines</button>
                 </div>
+                
+                <!-- DRC Configuration Settings -->
+                <div class="settings-section">
+                    <h3>🎯 DRC Calibration Settings</h3>
+                    <p class="settings-hint">Configure linear mapping between S21 RMS (dB) and DRC percentage. Batch ID will be auto-generated.</p>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">Batch ID:</label>
+                        <div class="setting-input" id="drcNextBatchId" style="background: #f3f4f6; cursor: not-allowed; color: #6b7280;">
+                            Auto-generated on save
+                        </div>
+                        <small class="setting-hint">Format: yymmddhhmmss (timestamp)</small>
+                    </div>
+                    
+                    <div class="drc-calibration-points">
+                        <!-- Lower Calibration Point -->
+                        <div class="calibration-point">
+                            <h4>📉 Lower Calibration Point</h4>
+                            <div class="setting-group-inline">
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="s21LowDb">S21 Low (dB):</label>
+                                    <input type="number" id="s21LowDb" class="setting-input-sm" step="0.1" value="-90" required>
+                                </div>
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="drc1Percent">DRC1 (%):</label>
+                                    <input type="number" id="drc1Percent" class="setting-input-sm" step="0.1" min="0" max="100" value="0" required>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Upper Calibration Point -->
+                        <div class="calibration-point">
+                            <h4>📈 Upper Calibration Point</h4>
+                            <div class="setting-group-inline">
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="s21HighDb">S21 High (dB):</label>
+                                    <input type="number" id="s21HighDb" class="setting-input-sm" step="0.1" value="-70" required>
+                                </div>
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="drc2Percent">DRC2 (%):</label>
+                                    <input type="number" id="drc2Percent" class="setting-input-sm" step="0.1" min="0" max="100" value="100" required>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="saveDrcSettingsBtn">💾 Save DRC Settings</button>
+                    <button class="btn btn-secondary" id="loadDrcSettingsBtn">📥 Load Latest Settings</button>
+                </div>
             </div>
         </div>
 
@@ -550,18 +609,20 @@ cd "C:\Program Files\PostgreSQL\18\bin"<!DOCTYPE html>
                                     <tr>
                                         <th>Timestamp</th>
                                         <th>Sweep #</th>
+                                        <th>Batch ID</th>
                                         <th>S11 RMS (dB)</th>
                                         <th>S11 Min (dB)</th>
                                         <th>S11 Max (dB)</th>
                                         <th>S21 RMS (dB)</th>
                                         <th>S21 Min (dB)</th>
                                         <th>S21 Max (dB)</th>
+                                        <th>DRC (%)</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="historyTableBody">
                                     <tr>
-                                        <td colspan="9" class="no-data">No data available. Query database to load records.</td>
+                                        <td colspan="11" class="no-data">No data available. Query database to load records.</td>
                                     </tr>
                                 </tbody>
                             </table>

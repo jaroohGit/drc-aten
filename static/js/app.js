@@ -552,6 +552,28 @@ function setupWebSocket() {
         if (data.success) {
             showNotification(data.message || 'Data saved successfully!', 'success');
             
+            // Store measurement batch_id
+            if (data.batch_id) {
+                currentMeasurementBatchId = data.batch_id;
+                
+                // Update DRC display with new batch_id
+                const s21RmsElement = document.getElementById('s21AvgDb');
+                if (s21RmsElement && s21RmsElement.textContent !== '--') {
+                    const s21Rms = parseFloat(s21RmsElement.textContent);
+                    updateDrcDisplay(s21Rms);
+                    
+                    // Hold DRC value for 5 seconds
+                    isDrcHeld = true;
+                    if (drcHoldTimer) {
+                        clearTimeout(drcHoldTimer);
+                    }
+                    drcHoldTimer = setTimeout(() => {
+                        isDrcHeld = false;
+                        drcHoldTimer = null;
+                    }, 5000);
+                }
+            }
+            
             // Update last saved display
             if (data.last_saved) {
                 updateLastSavedDisplay(data.last_saved);
@@ -584,6 +606,11 @@ function updateDashboard(data) {
         document.getElementById('avgS21').textContent = data.summary.s21_avg_db.toFixed(2);
         document.getElementById('maxS21').textContent = data.summary.s21_max_db.toFixed(2);
         document.getElementById('minS21').textContent = data.summary.s21_min_db.toFixed(2);
+        
+        // Update DRC display with current S21 RMS (only if not held)
+        if (currentDrcSettings && !isDrcHeld) {
+            updateDrcDisplay(data.summary.s21_avg_db);
+        }
     }
     
     document.getElementById('lastUpdate').textContent = `Last update: ${data.timestamp}`;
@@ -1239,16 +1266,19 @@ socket.on('historical_data_result', (result) => {
             result.data.forEach(row => {
                 const tr = document.createElement('tr');
                 const timestamp = new Date(row.timestamp).toLocaleString();
+                const drcDisplay = row.drc_percent !== null ? row.drc_percent : '--';
                 
                 tr.innerHTML = `
                     <td>${timestamp}</td>
                     <td>${row.sweep_count}</td>
+                    <td>${row.batch_id}</td>
                     <td>${row.s11_rms}</td>
                     <td>${row.s11_min}</td>
                     <td>${row.s11_max}</td>
                     <td>${row.s21_rms}</td>
                     <td>${row.s21_min}</td>
                     <td>${row.s21_max}</td>
+                    <td>${drcDisplay}</td>
                     <td>
                         <button class="btn-small btn-view" onclick="viewDetails('${row.timestamp}')" title="View Details">👁️</button>
                     </td>
@@ -1256,13 +1286,13 @@ socket.on('historical_data_result', (result) => {
                 tableBody.appendChild(tr);
             });
         } else {
-            tableBody.innerHTML = '<tr><td colspan="9" class="no-data">No records found for the selected criteria.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="11" class="no-data">No records found for the selected criteria.</td></tr>';
         }
     } else {
         errorMsg.textContent = '❌ ' + result.message;
         errorMsg.style.display = 'block';
         recordCount.textContent = '0 records';
-        tableBody.innerHTML = '<tr><td colspan="9" class="no-data">Query failed. Check database connection.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="11" class="no-data">Query failed. Check database connection.</td></tr>';
     }
 });
 
@@ -1310,6 +1340,150 @@ function exportToCsv() {
     a.click();
     window.URL.revokeObjectURL(url);
 }
+
+// ===== DRC Calculation Functions =====
+
+// Global DRC settings
+let currentDrcSettings = null;
+let currentMeasurementBatchId = null;
+let drcHoldTimer = null;
+let isDrcHeld = false;
+
+// Get next batch ID
+function getNextBatchId() {
+    socket.emit('get_drc_settings', {});
+}
+
+// Save DRC Settings
+function saveDrcSettings() {
+    const s21LowDb = parseFloat(document.getElementById('s21LowDb').value);
+    const drc1Percent = parseFloat(document.getElementById('drc1Percent').value);
+    const s21HighDb = parseFloat(document.getElementById('s21HighDb').value);
+    const drc2Percent = parseFloat(document.getElementById('drc2Percent').value);
+    
+    // Validation
+    if (isNaN(s21LowDb) || isNaN(drc1Percent) || isNaN(s21HighDb) || isNaN(drc2Percent)) {
+        showNotification('Please fill in all DRC settings with valid numbers', 'error');
+        return;
+    }
+    
+    if (s21HighDb === s21LowDb) {
+        showNotification('S21 High dB must be different from S21 Low dB', 'error');
+        return;
+    }
+    
+    if (drc1Percent < 0 || drc1Percent > 100 || drc2Percent < 0 || drc2Percent > 100) {
+        showNotification('DRC percentages must be between 0 and 100', 'error');
+        return;
+    }
+    
+    // Send to server (batch_id will be auto-generated)
+    socket.emit('save_drc_settings', {
+        s21_low_db: s21LowDb,
+        drc1_percent: drc1Percent,
+        s21_high_db: s21HighDb,
+        drc2_percent: drc2Percent
+    });
+}
+
+// Load DRC Settings
+function loadDrcSettings() {
+    socket.emit('get_drc_settings', {});
+}
+
+// Calculate and Update DRC Display
+function updateDrcDisplay(s21RmsDb) {
+    if (!currentDrcSettings) {
+        document.getElementById('drcResultCard').style.display = 'none';
+        return;
+    }
+    
+    const { slope_m, intercept_b, drc1_percent, drc2_percent } = currentDrcSettings;
+    
+    // Calculate DRC
+    let drcPercent = slope_m * s21RmsDb + intercept_b;
+    
+    // Clamp to valid range
+    const minDrc = Math.min(drc1_percent, drc2_percent);
+    const maxDrc = Math.max(drc1_percent, drc2_percent);
+    drcPercent = Math.max(minDrc, Math.min(maxDrc, drcPercent));
+    
+    // Use measurement batch_id if available, otherwise use calibration batch_id
+    const displayBatchId = currentMeasurementBatchId || currentDrcSettings.batch_id || 'N/A';
+    
+    // Update display in stat-card format
+    document.getElementById('drcResultCard').style.display = 'block';
+    document.getElementById('drcBatchIdDisplay').textContent = `Batch: ${displayBatchId}`;
+    document.getElementById('drcValueDisplay').textContent = `${drcPercent.toFixed(2)}%`;
+    document.getElementById('drcFormulaDisplay').textContent = 
+        `DRC% = ${slope_m.toFixed(2)} × S21 + ${intercept_b.toFixed(0)}`;
+}
+
+// Socket event handlers for DRC
+socket.on('drc_save_result', (result) => {
+    if (result.success) {
+        showNotification(result.message, 'success');
+        
+        // Store complete settings
+        currentDrcSettings = {
+            batch_id: result.batch_id,
+            s21_low_db: result.s21_low_db,
+            drc1_percent: result.drc1_percent,
+            s21_high_db: result.s21_high_db,
+            drc2_percent: result.drc2_percent,
+            slope_m: result.slope_m,
+            intercept_b: result.intercept_b
+        };
+        
+        // Immediately update DRC display with new batch ID
+        const s21RmsElement = document.getElementById('s21AvgDb');
+        if (s21RmsElement && s21RmsElement.textContent !== '--') {
+            const s21Rms = parseFloat(s21RmsElement.textContent);
+            updateDrcDisplay(s21Rms);
+        }
+    } else {
+        showNotification(result.message, 'error');
+    }
+});
+
+socket.on('drc_settings_result', (result) => {
+    if (result.success) {
+        const settings = result.settings;
+        currentDrcSettings = settings;
+        
+        // Update form fields
+        document.getElementById('drcBatchId').value = settings.batch_id;
+        document.getElementById('s21LowDb').value = settings.s21_low_db;
+        document.getElementById('drc1Percent').value = settings.drc1_percent;
+        document.getElementById('s21HighDb').value = settings.s21_high_db;
+        document.getElementById('drc2Percent').value = settings.drc2_percent;
+        
+        showNotification(`Loaded settings for ${settings.batch_id}`, 'success');
+        
+        // Update "Next Batch ID" display (timestamp format)
+        document.getElementById('drcNextBatchId').textContent = 'Auto-generated on save';
+        
+        // Update DRC display with current S21 RMS if available
+        const s21RmsElement = document.getElementById('s21AvgDb');
+        if (s21RmsElement && s21RmsElement.textContent !== '--') {
+            const s21Rms = parseFloat(s21RmsElement.textContent);
+            updateDrcDisplay(s21Rms);
+        }
+    } else {
+        // No settings found
+        document.getElementById('drcNextBatchId').textContent = 'Auto-generated on save';
+        showNotification('No previous settings. Ready for first batch.', 'info');
+    }
+});
+
+// Event listeners for DRC buttons
+document.getElementById('saveDrcSettingsBtn')?.addEventListener('click', saveDrcSettings);
+document.getElementById('loadDrcSettingsBtn')?.addEventListener('click', loadDrcSettings);
+
+// Auto-load DRC settings on page load to get next batch ID
+setTimeout(() => {
+    loadDrcSettings();
+}, 1000);
 
 // Reset Scan UI
 function resetScanUI() {
