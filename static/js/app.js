@@ -759,6 +759,8 @@ function updateDataTable(data) {
 
 // Switch between pages
 function switchPage(pageName) {
+    console.log('Switching to page:', pageName);
+    
     // Update navigation
     document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.remove('active');
@@ -772,6 +774,12 @@ function switchPage(pageName) {
         page.classList.remove('active');
     });
     document.getElementById(pageName + 'Page').classList.add('active');
+    
+    // Load models when switching to models page
+    if (pageName === 'models') {
+        console.log('Models page activated, loading models...');
+        loadTrainedModels();
+    }
 }
 
 // Update connection status
@@ -1480,10 +1488,356 @@ socket.on('drc_settings_result', (result) => {
 document.getElementById('saveDrcSettingsBtn')?.addEventListener('click', saveDrcSettings);
 document.getElementById('loadDrcSettingsBtn')?.addEventListener('click', loadDrcSettings);
 
+// Event listener for Manual Batch ID button
+document.getElementById('applyManualBatchBtn')?.addEventListener('click', function() {
+    const manualBatchId = document.getElementById('manualBatchId').value.trim();
+    
+    if (manualBatchId) {
+        // Use manual batch ID
+        currentMeasurementBatchId = manualBatchId;
+        
+        // Update DRC display with manual batch ID
+        document.getElementById('drcBatchIdDisplay').textContent = `Batch: ${manualBatchId}`;
+        
+        showNotification(`Manual Batch ID set: ${manualBatchId}`, 'success');
+        
+        // If there's current S21 data, update DRC display
+        const s21RmsElement = document.getElementById('avgS21');
+        if (s21RmsElement && s21RmsElement.textContent !== '--') {
+            const s21Rms = parseFloat(s21RmsElement.textContent);
+            if (!isNaN(s21Rms)) {
+                updateDrcDisplay(s21Rms);
+            }
+        }
+    } else {
+        // Clear manual batch ID, return to auto mode
+        currentMeasurementBatchId = null;
+        showNotification('Manual Batch ID cleared. Using auto-generated batch.', 'info');
+        
+        // Update display to show auto mode
+        if (currentDrcSettings && currentDrcSettings.batch_id) {
+            document.getElementById('drcBatchIdDisplay').textContent = `Batch: ${currentDrcSettings.batch_id}`;
+        } else {
+            document.getElementById('drcBatchIdDisplay').textContent = 'Batch: --';
+        }
+    }
+});
+
+// Event listener for Train Model button
+document.getElementById('trainModelBtn')?.addEventListener('click', function() {
+    console.log('Train Model button clicked');
+    const selectedModel = document.getElementById('drcModelSelect').value;
+    console.log('Selected model:', selectedModel);
+    console.log('Dataset records count:', datasetRecords.length);
+    
+    // Check if we have dataset
+    if (datasetRecords.length === 0) {
+        console.warn('No dataset records available');
+        showNotification('No training data available. Please generate sample data first in Analysis page.', 'warning');
+        switchPage('analysis');
+        return;
+    }
+    
+    // Count valid records (must have both s21_avg and drc_evaluate)
+    const validRecords = datasetRecords.filter(r => 
+        r.s21_avg && r.drc_evaluate && 
+        !isNaN(parseFloat(r.s21_avg)) && !isNaN(parseFloat(r.drc_evaluate))
+    );
+    
+    console.log('Valid records for training:', validRecords.length);
+    console.log('Sample record:', validRecords[0]);
+    
+    if (validRecords.length < 2) {
+        showNotification(`Need at least 2 complete records for training. Found ${validRecords.length}. Please add more data in Analysis page.`, 'error');
+        switchPage('analysis');
+        return;
+    }
+    
+    // Generate model name
+    const timestamp = new Date().toISOString().slice(0,19).replace(/[-:T]/g, '');
+    const modelName = `${selectedModel}_${timestamp}`;
+    
+    console.log('Training model:', modelName);
+    showNotification(`Training ${selectedModel} model with ${validRecords.length} records...`, 'info');
+    
+    // Send training request
+    socket.emit('train_model', {
+        model_type: selectedModel,
+        model_name: modelName,
+        dataset: validRecords
+    });
+    console.log('Training request sent');
+});
+
 // Auto-load DRC settings on page load to get next batch ID
 setTimeout(() => {
     loadDrcSettings();
 }, 1000);
+
+// ===== Dataset Preparation Functions =====
+let datasetRecords = [];
+
+// Load dataset from database
+function loadDatasetFromDB() {
+    // Get selected load mode
+    const loadMode = document.querySelector('input[name="loadMode"]:checked').value;
+    
+    document.getElementById('datasetStatus').textContent = 'Loading...';
+    socket.emit('load_dataset', { mode: loadMode });
+}
+
+// Export dataset to CSV
+function exportDataset() {
+    if (datasetRecords.length === 0) {
+        showNotification('No data to export', 'warning');
+        return;
+    }
+    
+    // Create CSV content
+    const headers = ['Batch ID', 'Weight-Gross', 'Weight-Net', 'Factor', 'DRC-Evaluate', 'DRC-Calculate', 'S21 Avg', 'Timestamp'];
+    const csvRows = [headers.join(',')];
+    
+    datasetRecords.forEach(row => {
+        const values = [
+            row.batch_id || '',
+            row.weight_gross || '',
+            row.weight_net || '',
+            row.factor || '',
+            row.drc_evaluate || '',
+            row.drc_calculate || '',
+            row.s21_avg || '',
+            row.timestamp || ''
+        ];
+        csvRows.push(values.join(','));
+    });
+    
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dataset_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    
+    showNotification('Dataset exported successfully', 'success');
+}
+
+// Add new empty row to dataset
+function addDatasetRow() {
+    const newRow = {
+        id: Date.now(),
+        batch_id: '',
+        weight_gross: '',
+        weight_net: '',
+        factor: '',
+        drc_evaluate: '',
+        drc_calculate: '',
+        s21_avg: '',
+        timestamp: new Date().toISOString()
+    };
+    datasetRecords.push(newRow);
+    renderDatasetTable();
+    updateDatasetStats();
+}
+
+// Generate sample data for testing
+function generateSampleData() {
+    const sampleCount = 8;
+    const baseDate = new Date();
+    
+    const samples = [
+        { batchSuffix: '00057', wGross: 18.78, wNet: 16.91, factor: 0.72, drcEval: 64.8, s21: -31.5 },
+        { batchSuffix: '00054', wGross: 18.71, wNet: 16.11, factor: 0.72, drcEval: 62.0, s21: -33.2 },
+        { batchSuffix: '00059', wGross: 19.28, wNet: 17.75, factor: 0.72, drcEval: 66.3, s21: -29.8 },
+        { batchSuffix: '00058', wGross: 18.93, wNet: 17.20, factor: 0.72, drcEval: 65.4, s21: -30.9 },
+        { batchSuffix: '00097', wGross: 19.51, wNet: 17.28, factor: 0.72, drcEval: 63.8, s21: -32.4 },
+        { batchSuffix: '00029', wGross: 20.00, wNet: 16.24, factor: 0.72, drcEval: 58.5, s21: -36.8 },
+        { batchSuffix: '00045', wGross: 20.00, wNet: 16.68, factor: 0.72, drcEval: 60.0, s21: -35.0 },
+        { batchSuffix: '00099', wGross: 19.89, wNet: 17.84, factor: 0.72, drcEval: 64.6, s21: -31.2 }
+    ];
+    
+    const newRecords = samples.map((sample, index) => {
+        const timestamp = new Date(baseDate.getTime() - (sampleCount - index) * 3600000);
+        const drcCalc = (sample.drcEval * 0.98 + Math.random() * 2).toFixed(2);
+        
+        return {
+            id: Date.now() + index,
+            batch_id: `26KBI${sample.batchSuffix}`,
+            weight_gross: sample.wGross.toFixed(2),
+            weight_net: sample.wNet.toFixed(2),
+            factor: sample.factor.toFixed(2),
+            drc_evaluate: sample.drcEval.toFixed(1),
+            drc_calculate: drcCalc,
+            s21_avg: sample.s21.toFixed(2),
+            timestamp: timestamp.toISOString()
+        };
+    });
+    
+    datasetRecords = [...datasetRecords, ...newRecords];
+    renderDatasetTable();
+    updateDatasetStats();
+    showNotification(`Generated ${sampleCount} sample records`, 'success');
+}
+
+// Remove row from dataset
+function removeDatasetRow(id) {
+    datasetRecords = datasetRecords.filter(r => r.id !== id);
+    renderDatasetTable();
+    updateDatasetStats();
+}
+
+// Update dataset row
+function updateDatasetRow(id, field, value) {
+    const row = datasetRecords.find(r => r.id === id);
+    if (row) {
+        row[field] = value;
+        updateDatasetStats();
+    }
+}
+
+// Render dataset table
+function renderDatasetTable() {
+    const tbody = document.getElementById('datasetTableBody');
+    
+    if (datasetRecords.length === 0) {
+        tbody.innerHTML = `
+            <tr class="no-data">
+                <td colspan="10" style="text-align: center; padding: 40px; color: #9ca3af;">
+                    No data loaded. Click "Load from Database" or "Add Row" to start.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = datasetRecords.map((row, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td><input type="text" class="dataset-input" value="${row.batch_id || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'batch_id', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.weight_gross || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'weight_gross', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.weight_net || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'weight_net', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.factor || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'factor', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.drc_evaluate || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'drc_evaluate', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.drc_calculate || ''}" 
+                onchange="updateDatasetRow(${row.id}, 'drc_calculate', this.value)" /></td>
+            <td><input type="number" class="dataset-input" step="0.01" value="${row.s21_avg || ''}" 
+                onchange="updateDatasetRow(${row.id}, 's21_avg', this.value)" /></td>
+            <td style="font-size: 0.75em;">${new Date(row.timestamp).toLocaleString()}</td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="removeDatasetRow(${row.id})" title="Delete">🗑️</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// Update dataset statistics
+function updateDatasetStats() {
+    const total = datasetRecords.length;
+    const complete = datasetRecords.filter(r => 
+        r.batch_id && r.weight_gross && r.weight_net && 
+        r.factor && r.drc_evaluate && r.s21_avg
+    ).length;
+    
+    const drcEvalValues = datasetRecords
+        .map(r => parseFloat(r.drc_evaluate))
+        .filter(v => !isNaN(v));
+    const avgDrcEval = drcEvalValues.length > 0 
+        ? (drcEvalValues.reduce((a, b) => a + b, 0) / drcEvalValues.length).toFixed(2)
+        : '--';
+    
+    const s21Values = datasetRecords
+        .map(r => parseFloat(r.s21_avg))
+        .filter(v => !isNaN(v));
+    const avgS21 = s21Values.length > 0 
+        ? (s21Values.reduce((a, b) => a + b, 0) / s21Values.length).toFixed(2)
+        : '--';
+    
+    document.getElementById('datasetTotalRecords').textContent = total;
+    document.getElementById('datasetCompleteRecords').textContent = complete;
+    document.getElementById('datasetAvgDrcEval').textContent = avgDrcEval;
+    document.getElementById('datasetAvgS21').textContent = avgS21;
+}
+
+// Clear all dataset
+function clearDataset() {
+    if (confirm('Are you sure you want to clear all dataset records?')) {
+        datasetRecords = [];
+        renderDatasetTable();
+        updateDatasetStats();
+        showNotification('Dataset cleared', 'info');
+    }
+}
+
+// Save dataset
+function saveDataset() {
+    if (datasetRecords.length === 0) {
+        showNotification('No data to save', 'warning');
+        return;
+    }
+    
+    document.getElementById('datasetStatus').textContent = 'Saving...';
+    socket.emit('save_dataset', { records: datasetRecords });
+}
+
+// Socket event handlers for dataset
+socket.on('dataset_loaded', (data) => {
+    if (data.success) {
+        const loadMode = data.mode || 'all';
+        
+        datasetRecords = data.records.map(r => ({
+            id: Date.now() + Math.random(),
+            batch_id: r.batch_id || '',
+            weight_gross: r.weight_gross || '',
+            weight_net: r.weight_net || '',
+            factor: r.factor || '',
+            drc_evaluate: r.drc_evaluate || '',
+            drc_calculate: r.drc_calculate || '',
+            s21_avg: r.s21_avg || '',
+            timestamp: r.timestamp || new Date().toISOString()
+        }));
+        renderDatasetTable();
+        updateDatasetStats();
+        
+        let statusMsg = `Loaded ${datasetRecords.length} records`;
+        if (loadMode === 'complete') {
+            statusMsg += ' (complete only)';
+        } else if (loadMode === 'for_input') {
+            statusMsg += ' (for input)';
+        }
+        
+        document.getElementById('datasetStatus').textContent = statusMsg;
+        showNotification(statusMsg, 'success');
+    } else {
+        document.getElementById('datasetStatus').textContent = 'Load failed';
+        showNotification(data.message || 'Failed to load dataset', 'error');
+    }
+});
+
+socket.on('dataset_saved', (data) => {
+    if (data.success) {
+        document.getElementById('datasetStatus').textContent = 'Saved successfully';
+        showNotification(data.message || 'Dataset saved successfully', 'success');
+    } else {
+        document.getElementById('datasetStatus').textContent = 'Save failed';
+        showNotification(data.message || 'Failed to save dataset', 'error');
+    }
+});
+
+// Event listeners for dataset buttons
+document.getElementById('loadDatasetBtn')?.addEventListener('click', loadDatasetFromDB);
+document.getElementById('addDatasetRowBtn')?.addEventListener('click', addDatasetRow);
+document.getElementById('generateSampleBtn')?.addEventListener('click', generateSampleData);
+document.getElementById('clearDatasetBtn')?.addEventListener('click', clearDataset);
+document.getElementById('saveDatasetBtn')?.addEventListener('click', saveDataset);
+document.getElementById('exportDatasetBtn')?.addEventListener('click', exportDataset);
 
 // Reset Scan UI
 function resetScanUI() {
@@ -1491,3 +1845,538 @@ function resetScanUI() {
     document.getElementById('startScanBtn').disabled = false;
     scanCollectedData = [];
 }
+
+// Data View functions
+let detailChartInstance = null;
+
+function queryDataView() {
+    const startDate = document.getElementById('dataViewStartDate').value;
+    const endDate = document.getElementById('dataViewEndDate').value;
+    const limit = document.getElementById('dataViewLimitRecords').value;
+    
+    const loadingMsg = document.getElementById('dataViewLoadingMsg');
+    const errorMsg = document.getElementById('dataViewErrorMsg');
+    const queryBtn = document.getElementById('queryDataViewBtn');
+    
+    loadingMsg.style.display = 'block';
+    errorMsg.style.display = 'none';
+    queryBtn.disabled = true;
+    queryBtn.textContent = '⏳ Loading...';
+    
+    socket.emit('query_data_view', {
+        start_date: startDate || null,
+        end_date: endDate || null,
+        limit: parseInt(limit)
+    });
+}
+
+socket.on('data_view_result', (result) => {
+    const loadingMsg = document.getElementById('dataViewLoadingMsg');
+    const errorMsg = document.getElementById('dataViewErrorMsg');
+    const queryBtn = document.getElementById('queryDataViewBtn');
+    const recordCount = document.getElementById('dataViewRecordCount');
+    const tableBody = document.getElementById('dataViewTableBody');
+    
+    loadingMsg.style.display = 'none';
+    queryBtn.disabled = false;
+    queryBtn.textContent = '🔍 Query Saved Data';
+    
+    if (result.success) {
+        recordCount.textContent = `${result.count} records`;
+        
+        if (result.data && result.data.length > 0) {
+            tableBody.innerHTML = '';
+            result.data.forEach(row => {
+                const tr = document.createElement('tr');
+                const timestamp = new Date(row.timestamp).toLocaleString();
+                const drcDisplay = row.drc_percent !== null ? row.drc_percent + '%' : '--';
+                
+                tr.innerHTML = `
+                    <td>${timestamp}</td>
+                    <td>${row.batch_id}</td>
+                    <td>${drcDisplay}</td>
+                    <td>${row.s11_rms}</td>
+                    <td>${row.s21_rms}</td>
+                    <td>${row.signal_quality}%</td>
+                    <td>
+                        <button class="btn-small btn-view" onclick="viewMeasurementDetails('${row.timestamp}')" title="View 101 Points">👁️ View</button>
+                    </td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        } else {
+            tableBody.innerHTML = '<tr><td colspan="7" class="no-data">No records found for the selected criteria.</td></tr>';
+        }
+    } else {
+        errorMsg.textContent = '❌ ' + result.message;
+        errorMsg.style.display = 'block';
+        recordCount.textContent = '0 records';
+        tableBody.innerHTML = '<tr><td colspan="7" class="no-data">Query failed. Check database connection.</td></tr>';
+    }
+});
+
+function viewMeasurementDetails(timestamp) {
+    socket.emit('get_measurement_details', { timestamp: timestamp });
+    document.getElementById('detailModal').style.display = 'flex';
+}
+
+socket.on('measurement_details_result', (result) => {
+    if (result.success) {
+        const titleText = `101-Point Data - Batch: ${result.batch_id}${result.drc_percent ? ` | DRC: ${result.drc_percent}%` : ''}`;
+        document.getElementById('detailModalTitle').textContent = titleText;
+        
+        // Populate table
+        const tableBody = document.getElementById('detailTableBody');
+        tableBody.innerHTML = '';
+        
+        result.data.forEach((point, index) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${index + 1}</td>
+                <td>${point.frequency}</td>
+                <td>${point.s11_db}</td>
+                <td>${point.s11_phase}</td>
+                <td>${point.s21_db !== null ? point.s21_db : '--'}</td>
+                <td>${point.s21_phase !== null ? point.s21_phase : '--'}</td>
+            `;
+            tableBody.appendChild(tr);
+        });
+        
+        // Create chart
+        const ctx = document.getElementById('detailChart').getContext('2d');
+        
+        if (detailChartInstance) {
+            detailChartInstance.destroy();
+        }
+        
+        detailChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: result.data.map(p => p.frequency.toFixed(4)),
+                datasets: [
+                    {
+                        label: 'S11 (dB)',
+                        data: result.data.map(p => p.s11_db),
+                        borderColor: 'rgb(54, 162, 235)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 1
+                    },
+                    {
+                        label: 'S21 (dB)',
+                        data: result.data.map(p => p.s21_db),
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    },
+                    title: {
+                        display: true,
+                        text: 'S11 and S21 vs Frequency'
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Frequency (GHz)'
+                        },
+                        ticks: {
+                            maxTicksLimit: 10
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Magnitude (dB)'
+                        }
+                    }
+                }
+            }
+        });
+    } else {
+        showNotification('Failed to load measurement details: ' + result.message, 'error');
+    }
+});
+
+function closeDetailModal() {
+    document.getElementById('detailModal').style.display = 'none';
+    if (detailChartInstance) {
+        detailChartInstance.destroy();
+        detailChartInstance = null;
+    }
+}
+
+// Reset Scan UI
+function resetScanUI() {
+    document.getElementById('scanProgressSection').style.display = 'none';
+    document.getElementById('startScanBtn').disabled = false;
+    scanCollectedData = [];
+}
+
+// ===== Models Management Functions =====
+let currentModels = [];
+let selectedModelForDetail = null;
+
+// Load trained models
+function loadTrainedModels() {
+    console.log('Loading trained models...');
+    socket.emit('get_trained_models', {});
+}
+
+// Render models grid
+function renderModelsGrid(models) {
+    const grid = document.getElementById('modelsGrid');
+    
+    if (!models || models.length === 0) {
+        grid.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 60px; color: #9ca3af;">
+                <div style="font-size: 3em; margin-bottom: 15px;">🤖</div>
+                <div style="font-size: 1.1em; margin-bottom: 10px;">No models found</div>
+                <div style="font-size: 0.9em;">Train a model from the Analysis page to get started</div>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = models.map(model => {
+        const typeClass = model.type.replace('_', '-');
+        const isActive = model.is_active;
+        const rSquared = model.r_squared || 0;
+        const rmse = model.rmse || 0;
+        const mae = model.mae || 0;
+        
+        let perfLevel = 'poor';
+        if (rSquared >= 0.95) perfLevel = 'excellent';
+        else if (rSquared >= 0.85) perfLevel = 'good';
+        else if (rSquared >= 0.70) perfLevel = 'fair';
+        
+        const formula = model.parameters?.formula || 'N/A';
+        const createdDate = new Date(model.created_at).toLocaleString();
+        
+        return `
+            <div class="model-card ${isActive ? 'active-model' : 'inactive-model'}" data-model-id="${model.id}">
+                <div class="performance-indicator ${perfLevel}"></div>
+                
+                <div class="model-card-header">
+                    <div>
+                        <div class="model-card-title">${model.name}</div>
+                        <div class="model-card-meta">
+                            <span class="model-badge ${typeClass}">${formatModelType(model.type)}</span>
+                            <span class="model-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '✓ Active' : '○ Inactive'}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-metrics-grid">
+                    <div class="metric-item">
+                        <div class="metric-label">R² Score</div>
+                        <div class="metric-value" style="color: ${rSquared >= 0.85 ? '#10b981' : '#6b7280'}">
+                            ${rSquared.toFixed(4)}
+                        </div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">RMSE</div>
+                        <div class="metric-value" style="color: ${rmse <= 2 ? '#10b981' : '#6b7280'}">
+                            ${rmse.toFixed(4)}
+                        </div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">MAE</div>
+                        <div class="metric-value" style="color: ${mae <= 1.5 ? '#10b981' : '#6b7280'}">
+                            ${mae.toFixed(4)}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="margin: 10px 0;">
+                    <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 5px; font-weight: 600;">
+                        Training Data: ${model.training_count} samples
+                    </div>
+                </div>
+                
+                <div class="model-formula">${formula}</div>
+                
+                <div style="font-size: 0.7em; color: #9ca3af; margin-top: 10px;">
+                    Created: ${createdDate}
+                </div>
+                
+                <div class="model-actions">
+                    <button onclick="viewModelDetails('${model.name}')" style="background: #3b82f6; color: white;">📊 Details</button>
+                    <button onclick="useModelForCalculation('${model.name}')" style="background: #10b981; color: white;">🔄 Use Model</button>
+                    ${!isActive ? `<button onclick="activateModel('${model.name}')" style="background: #f59e0b; color: white;">✓ Activate</button>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatModelType(type) {
+    const types = {
+        'linear_regression': 'Linear Regression',
+        'polynomial': 'Polynomial Regression',
+        'svr': 'Support Vector Regression',
+        'random_forest': 'Random Forest'
+    };
+    return types[type] || type;
+}
+
+function viewModelDetails(modelName) {
+    const model = currentModels.find(m => m.name === modelName);
+    if (!model) return;
+    
+    selectedModelForDetail = model;
+    
+    document.getElementById('modalModelName').textContent = model.name;
+    document.getElementById('modalModelType').textContent = formatModelType(model.type);
+    document.getElementById('modalCreatedAt').textContent = new Date(model.created_at).toLocaleString();
+    document.getElementById('modalTrainingCount').textContent = model.training_count;
+    document.getElementById('modalRSquared').textContent = (model.r_squared || 0).toFixed(4);
+    document.getElementById('modalRMSE').textContent = (model.rmse || 0).toFixed(4);
+    document.getElementById('modalMAE').textContent = (model.mae || 0).toFixed(4);
+    document.getElementById('modalParameters').textContent = JSON.stringify(model.parameters, null, 2);
+    document.getElementById('modalFormula').textContent = model.parameters?.formula || 'N/A';
+    document.getElementById('modalNotes').value = model.notes || '';
+    
+    document.getElementById('activateModelBtn').style.display = model.is_active ? 'none' : 'block';
+    document.getElementById('deactivateModelBtn').style.display = model.is_active ? 'block' : 'none';
+    
+    document.getElementById('modelDetailModal').style.display = 'flex';
+}
+
+function closeModelDetailModal() {
+    document.getElementById('modelDetailModal').style.display = 'none';
+    selectedModelForDetail = null;
+}
+
+function useModelForCalculation(modelName) {
+    const modelSelector = document.getElementById('drcCalculationModelSelect');
+    if (modelSelector) {
+        for (let i = 0; i < modelSelector.options.length; i++) {
+            if (modelSelector.options[i].value === modelName) {
+                modelSelector.selectedIndex = i;
+                break;
+            }
+        }
+        switchPage('dashboard');
+        showNotification(`Model "${modelName}" selected for DRC calculation`, 'success');
+    }
+}
+
+function activateModel(modelName) {
+    socket.emit('activate_model', { model_name: modelName });
+}
+
+function deactivateModel(modelName) {
+    socket.emit('deactivate_model', { model_name: modelName });
+}
+
+function deleteModel(modelName) {
+    if (confirm(`Are you sure you want to delete the model "${modelName}"? This action cannot be undone.`)) {
+        socket.emit('delete_model', { model_name: modelName });
+    }
+}
+
+function saveModelNotes() {
+    if (!selectedModelForDetail) return;
+    socket.emit('update_model_notes', {
+        model_name: selectedModelForDetail.name,
+        notes: document.getElementById('modalNotes').value
+    });
+}
+
+function filterAndSortModels() {
+    const typeFilter = document.getElementById('modelTypeFilter')?.value || 'all';
+    const statusFilter = document.getElementById('modelStatusFilter')?.value || 'all';
+    const sortBy = document.getElementById('modelSortBy')?.value || 'created_desc';
+    
+    let filtered = [...currentModels];
+    
+    if (typeFilter !== 'all') {
+        filtered = filtered.filter(m => m.type === typeFilter);
+    }
+    
+    if (statusFilter === 'active') {
+        filtered = filtered.filter(m => m.is_active);
+    } else if (statusFilter === 'inactive') {
+        filtered = filtered.filter(m => !m.is_active);
+    }
+    
+    filtered.sort((a, b) => {
+        switch (sortBy) {
+            case 'created_desc': return new Date(b.created_at) - new Date(a.created_at);
+            case 'created_asc': return new Date(a.created_at) - new Date(b.created_at);
+            case 'r_squared_desc': return (b.r_squared || 0) - (a.r_squared || 0);
+            case 'rmse_asc': return (a.rmse || 999) - (b.rmse || 999);
+            case 'name_asc': return a.name.localeCompare(b.name);
+            default: return 0;
+        }
+    });
+    
+    renderModelsGrid(filtered);
+}
+
+// Update models dropdown for DRC calculation
+function updateModelsList(models) {
+    const modelSelector = document.getElementById('drcCalculationModelSelect');
+    if (modelSelector && models) {
+        const currentValue = modelSelector.value;
+        modelSelector.innerHTML = '<option value="">Use Default (Linear from Settings)</option>';
+        
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.name;
+            option.textContent = `${model.name} (${formatModelType(model.type)}, R²=${(model.r_squared || 0).toFixed(3)})`;
+            if (model.is_active) {
+                option.textContent += ' ★';
+            }
+            modelSelector.appendChild(option);
+        });
+        
+        // Restore previous selection if it still exists
+        if (currentValue) {
+            for (let i = 0; i < modelSelector.options.length; i++) {
+                if (modelSelector.options[i].value === currentValue) {
+                    modelSelector.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Handle model training result
+socket.on('model_train_result', (result) => {
+    if (result.success) {
+        const model = result.model;
+        showNotification(
+            `✓ Model trained: ${model.name}\nR²: ${model.r_squared.toFixed(4)}, RMSE: ${model.rmse.toFixed(4)}`,
+            'success'
+        );
+        
+        // Refresh models list and switch to Models page
+        loadTrainedModels();
+        
+        // Switch to Models page to see the new model
+        setTimeout(() => {
+            switchPage('models');
+        }, 500);
+    } else {
+        showNotification(`Model training failed: ${result.message}`, 'error');
+    }
+});
+
+socket.on('trained_models_result', (result) => {
+    console.log('Received trained models result:', result);
+    if (result.success) {
+        currentModels = result.models || [];
+        const count = currentModels.length;
+        console.log(`Loaded ${count} models:`, currentModels);
+        
+        const modelsCountEl = document.getElementById('modelsCount');
+        if (modelsCountEl) {
+            modelsCountEl.textContent = count;
+        }
+        
+        filterAndSortModels();
+        updateModelsList(currentModels);
+        updateActiveModelDisplay();
+    } else {
+        console.error('Failed to load models:', result.message);
+        showNotification(`Failed to load models: ${result.message}`, 'error');
+    }
+});
+
+socket.on('model_activated', (result) => {
+    if (result.success) {
+        showNotification(`Model "${result.model_name}" activated`, 'success');
+        loadTrainedModels();
+        updateActiveModelDisplay();
+    } else {
+        showNotification(`Failed to activate model: ${result.message}`, 'error');
+    }
+});
+
+socket.on('model_deactivated', (result) => {
+    if (result.success) {
+        showNotification(`Model "${result.model_name}" deactivated`, 'success');
+        loadTrainedModels();
+        updateActiveModelDisplay();
+    } else {
+        showNotification(`Failed to deactivate model: ${result.message}`, 'error');
+    }
+});
+
+socket.on('model_deleted', (result) => {
+    if (result.success) {
+        showNotification('Model deleted successfully', 'success');
+        closeModelDetailModal();
+        loadTrainedModels();
+    } else {
+        showNotification(`Failed to delete model: ${result.message}`, 'error');
+    }
+});
+
+socket.on('model_notes_updated', (result) => {
+    if (result.success) {
+        showNotification('Model notes saved', 'success');
+        loadTrainedModels();
+    } else {
+        showNotification(`Failed to save notes: ${result.message}`, 'error');
+    }
+});
+
+document.getElementById('refreshModelsBtn')?.addEventListener('click', loadTrainedModels);
+
+document.getElementById('modelTypeFilter')?.addEventListener('change', filterAndSortModels);
+document.getElementById('modelStatusFilter')?.addEventListener('change', filterAndSortModels);
+document.getElementById('modelSortBy')?.addEventListener('change', filterAndSortModels);
+
+// Function to update active model status display on Dashboard
+function updateActiveModelDisplay() {
+    const activeModel = currentModels.find(m => m.is_active);
+    
+    const nameEl = document.getElementById('activeModelName');
+    const typeEl = document.getElementById('activeModelType');
+    const r2El = document.getElementById('activeModelR2');
+    const rmseEl = document.getElementById('activeModelRMSE');
+    
+    if (activeModel) {
+        nameEl.textContent = activeModel.name;
+        nameEl.style.color = '#059669';
+        typeEl.textContent = formatModelType(activeModel.type);
+        r2El.textContent = `R²: ${activeModel.r_squared.toFixed(4)}`;
+        rmseEl.textContent = `RMSE: ${activeModel.rmse.toFixed(4)}`;
+    } else {
+        nameEl.textContent = 'No model selected';
+        nameEl.style.color = '#9ca3af';
+        typeEl.textContent = '--';
+        r2El.textContent = 'R²: --';
+        rmseEl.textContent = 'RMSE: --';
+    }
+}
+
+document.getElementById('saveModelNotesBtn')?.addEventListener('click', saveModelNotes);
+document.getElementById('activateModelBtn')?.addEventListener('click', () => {
+    if (selectedModelForDetail) activateModel(selectedModelForDetail.name);
+});
+document.getElementById('deactivateModelBtn')?.addEventListener('click', () => {
+    if (selectedModelForDetail) deactivateModel(selectedModelForDetail.name);
+});
+document.getElementById('deleteModelBtn')?.addEventListener('click', () => {
+    if (selectedModelForDetail) deleteModel(selectedModelForDetail.name);
+});
+
+setTimeout(() => {
+    loadTrainedModels();
+}, 2000);

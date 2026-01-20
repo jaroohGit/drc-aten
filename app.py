@@ -107,8 +107,29 @@ def init_database():
                 s21_db DOUBLE PRECISION,
                 s21_phase DOUBLE PRECISION,
                 s21_real DOUBLE PRECISION,
-                s21_imag DOUBLE PRECISION
+                s21_imag DOUBLE PRECISION,
+                batch_id VARCHAR(50),
+                drc_percent DOUBLE PRECISION
             );
+        """)
+        
+        # Add batch_id and drc_percent columns if they don't exist (for existing databases)
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='measurements' AND column_name='batch_id'
+                ) THEN
+                    ALTER TABLE measurements ADD COLUMN batch_id VARCHAR(50);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='measurements' AND column_name='drc_percent'
+                ) THEN
+                    ALTER TABLE measurements ADD COLUMN drc_percent DOUBLE PRECISION;
+                END IF;
+            END $$;
         """)
         
         # Create index for time-based queries on regular table
@@ -168,6 +189,32 @@ def init_database():
         """)
         print("  ✓ DRC batch settings table created")
         
+        # Create trained models table for ML model management
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trained_models (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) UNIQUE NOT NULL,
+                model_type VARCHAR(50) NOT NULL,
+                parameters JSONB NOT NULL,
+                training_count INTEGER,
+                rmse DOUBLE PRECISION,
+                r_squared DOUBLE PRECISION,
+                mae DOUBLE PRECISION,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT FALSE,
+                notes TEXT
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trained_models_active 
+            ON trained_models (is_active);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trained_models_created 
+            ON trained_models (created_at DESC);
+        """)
+        print("  ✓ Trained models table created")
+        
         db_conn.commit()
         cursor.close()
         print("✓ Database initialized successfully (PostgreSQL)")
@@ -193,6 +240,25 @@ def save_measurement_to_db(data):
         # Generate batch_id using timestamp (yymmddhhmmss)
         batch_id = timestamp.strftime('%y%m%d%H%M%S')
         
+        # Get latest DRC settings for calculation
+        cursor.execute("""
+            SELECT slope_m, intercept_b, drc1_percent, drc2_percent
+            FROM drc_batch_settings
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        drc_settings = cursor.fetchone()
+        
+        # Calculate DRC percent
+        drc_percent = None
+        if drc_settings and data['summary'].get('s21_avg_db') is not None:
+            slope_m, intercept_b, drc1_percent, drc2_percent = drc_settings
+            drc_value = slope_m * data['summary']['s21_avg_db'] + intercept_b
+            # Clamp to valid range
+            min_drc = min(drc1_percent, drc2_percent)
+            max_drc = max(drc1_percent, drc2_percent)
+            drc_percent = max(min_drc, min(max_drc, drc_value))
+        
         # Prepare data for batch insert
         measurement_rows = []
         for i, s11_point in enumerate(data['s11_data']):
@@ -211,14 +277,17 @@ def save_measurement_to_db(data):
                 s21_point.get('db'),
                 s21_point.get('phase'),
                 s21_point.get('real'),
-                s21_point.get('imag')
+                s21_point.get('imag'),
+                batch_id,
+                drc_percent
             ))
         
         # Batch insert measurements
         execute_values(cursor, """
             INSERT INTO measurements 
             (time, sweep_count, frequency, s11_magnitude, s11_db, s11_phase, 
-             s11_real, s11_imag, s21_magnitude, s21_db, s21_phase, s21_real, s21_imag)
+             s11_real, s11_imag, s21_magnitude, s21_db, s21_phase, s21_real, s21_imag,
+             batch_id, drc_percent)
             VALUES %s
         """, measurement_rows)
         
@@ -1302,6 +1371,447 @@ def handle_query_historical_data(params):
             'success': False,
             'message': f'Query error: {str(e)}'
         })
+
+
+@socketio.on('query_data_view')
+def handle_query_data_view(params):
+    """Query saved measurements with summary info"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('data_view_result', {
+            'success': False,
+            'message': 'Database not available. Please configure PostgreSQL/TimescaleDB.'
+        })
+        return
+    
+    try:
+        cursor = db_conn.cursor()
+        
+        start_date = params.get('start_date')
+        end_date = params.get('end_date')
+        limit = params.get('limit', 50)
+        
+        # Build query for summary data
+        query = """
+            SELECT 
+                time,
+                batch_id,
+                s11_rms,
+                s21_rms,
+                signal_quality
+            FROM measurement_summary
+        """
+        
+        conditions = []
+        query_params = []
+        
+        if start_date:
+            conditions.append("time >= %s")
+            query_params.append(start_date)
+        
+        if end_date:
+            conditions.append("time <= %s")
+            query_params.append(end_date)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY time DESC LIMIT %s"
+        query_params.append(limit)
+        
+        cursor.execute(query, query_params)
+        rows = cursor.fetchall()
+        
+        # Get latest DRC settings for calculation
+        cursor.execute("""
+            SELECT slope_m, intercept_b, drc1_percent, drc2_percent
+            FROM drc_batch_settings
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        drc_settings = cursor.fetchone()
+        
+        # Format results
+        results = []
+        for row in rows:
+            result_row = {
+                'timestamp': row[0].isoformat(),
+                'batch_id': row[1] if row[1] else 'N/A',
+                's11_rms': round(row[2], 2),
+                's21_rms': round(row[3], 2),
+                'signal_quality': round(row[4], 2) if row[4] else 0
+            }
+            
+            # Calculate DRC if settings available
+            if drc_settings and row[3] is not None:
+                slope_m, intercept_b, drc1_percent, drc2_percent = drc_settings
+                drc_value = slope_m * row[3] + intercept_b
+                # Clamp to valid range
+                min_drc = min(drc1_percent, drc2_percent)
+                max_drc = max(drc1_percent, drc2_percent)
+                drc_value = max(min_drc, min(max_drc, drc_value))
+                result_row['drc_percent'] = round(drc_value, 2)
+            else:
+                result_row['drc_percent'] = None
+            
+            results.append(result_row)
+        
+        cursor.close()
+        
+        emit('data_view_result', {
+            'success': True,
+            'data': results,
+            'count': len(results)
+        })
+        
+    except Exception as e:
+        print(f"Data view query error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('data_view_result', {
+            'success': False,
+            'message': f'Query error: {str(e)}'
+        })
+
+
+@socketio.on('get_measurement_details')
+def handle_get_measurement_details(params):
+    """Get all 101 data points for a specific measurement"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('measurement_details_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        cursor = db_conn.cursor()
+        timestamp = params.get('timestamp')
+        
+        # Get all 101 points
+        cursor.execute("""
+            SELECT 
+                frequency,
+                s11_db,
+                s11_phase,
+                s11_real,
+                s11_imag,
+                s21_db,
+                s21_phase,
+                s21_real,
+                s21_imag,
+                batch_id,
+                drc_percent
+            FROM measurements
+            WHERE time = %s
+            ORDER BY frequency ASC
+        """, (timestamp,))
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        
+        if rows:
+            # Format results
+            data_points = []
+            batch_id = rows[0][9] if rows[0][9] else 'N/A'
+            drc_percent = rows[0][10]
+            
+            for row in rows:
+                data_points.append({
+                    'frequency': round(row[0], 4),
+                    's11_db': round(row[1], 2),
+                    's11_phase': round(row[2], 2),
+                    's11_real': round(row[3], 6),
+                    's11_imag': round(row[4], 6),
+                    's21_db': round(row[5], 2) if row[5] else None,
+                    's21_phase': round(row[6], 2) if row[6] else None,
+                    's21_real': round(row[7], 6) if row[7] else None,
+                    's21_imag': round(row[8], 6) if row[8] else None
+                })
+            
+            emit('measurement_details_result', {
+                'success': True,
+                'data': data_points,
+                'batch_id': batch_id,
+                'drc_percent': round(drc_percent, 2) if drc_percent else None,
+                'count': len(data_points)
+            })
+        else:
+            emit('measurement_details_result', {
+                'success': False,
+                'message': 'No data found for this timestamp'
+            })
+            
+    except Exception as e:
+        print(f"Get measurement details error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('measurement_details_result', {
+            'success': False,
+            'message': f'Error: {str(e)}'
+        })
+
+
+# ==================== Model Training & Management ====================
+
+@socketio.on('train_model')
+def handle_train_model(data):
+    """Train a machine learning model with provided dataset"""
+    try:
+        from datetime import datetime
+        import json
+        import math
+        
+        model_type = data.get('model_type', 'linear_regression')
+        model_name = data.get('model_name')
+        dataset = data.get('dataset', [])
+        
+        if not dataset or len(dataset) < 2:
+            emit('model_train_result', {
+                'success': False,
+                'message': 'Insufficient data for training. Need at least 2 records.'
+            })
+            return
+        
+        # Extract features (S21) and targets (DRC)
+        X = [float(record['s21_avg']) for record in dataset]
+        y = [float(record['drc_evaluate']) for record in dataset]
+        
+        # Train model based on type
+        if model_type == 'linear_regression':
+            # Calculate linear regression: y = mx + b using pure Python
+            n = len(X)
+            sum_x = sum(X)
+            sum_y = sum(y)
+            sum_xy = sum(x * y_val for x, y_val in zip(X, y))
+            sum_x2 = sum(x * x for x in X)
+            
+            # Calculate slope and intercept
+            denominator = (n * sum_x2 - sum_x * sum_x)
+            if denominator == 0:
+                emit('model_train_result', {
+                    'success': False,
+                    'message': 'Cannot train: all S21 values are identical'
+                })
+                return
+                
+            m = (n * sum_xy - sum_x * sum_y) / denominator
+            b = (sum_y - m * sum_x) / n
+            
+            # Calculate predictions
+            y_pred = [m * x + b for x in X]
+            
+            # Calculate metrics
+            mean_y = sum(y) / n
+            ss_res = sum((y_val - pred) ** 2 for y_val, pred in zip(y, y_pred))
+            ss_tot = sum((y_val - mean_y) ** 2 for y_val in y)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            
+            mse = sum((y_val - pred) ** 2 for y_val, pred in zip(y, y_pred)) / n
+            rmse = math.sqrt(mse)
+            mae = sum(abs(y_val - pred) for y_val, pred in zip(y, y_pred)) / n
+            
+            parameters = {
+                'slope': float(m),
+                'intercept': float(b),
+                'formula': f'DRC = {m:.6f} * S21 + {b:.6f}'
+            }
+            
+        else:
+            emit('model_train_result', {
+                'success': False,
+                'message': f'Model type {model_type} not yet implemented'
+            })
+            return
+        
+        # Save to database
+        if db_conn:
+            cursor = db_conn.cursor()
+            cursor.execute("""
+                INSERT INTO trained_models 
+                (name, model_type, parameters, training_count, rmse, r_squared, mae, created_at, is_active)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                model_name,
+                model_type,
+                json.dumps(parameters),
+                len(dataset),
+                float(rmse),
+                float(r_squared),
+                float(mae),
+                datetime.now(),
+                False  # New models start as inactive
+            ))
+            model_id = cursor.fetchone()[0]
+            db_conn.commit()
+            
+            emit('model_train_result', {
+                'success': True,
+                'model': {
+                    'id': model_id,
+                    'name': model_name,
+                    'type': model_type,
+                    'parameters': parameters,
+                    'training_count': len(dataset),
+                    'rmse': float(rmse),
+                    'r_squared': float(r_squared),
+                    'mae': float(mae),
+                    'created_at': datetime.now().isoformat()
+                },
+                'message': f'Model trained successfully! R²={r_squared:.4f}, RMSE={rmse:.4f}'
+            })
+        else:
+            emit('model_train_result', {
+                'success': False,
+                'message': 'Database not connected'
+            })
+            
+    except Exception as e:
+        print(f"Model training error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('model_train_result', {
+            'success': False,
+            'message': f'Training error: {str(e)}'
+        })
+
+
+@socketio.on('get_trained_models')
+def handle_get_trained_models(data=None):
+    """Get all trained models from database"""
+    try:
+        print("Getting trained models...")
+        if not db_conn:
+            print("Database not connected!")
+            emit('trained_models_result', {'success': False, 'message': 'Database not connected'})
+            return
+            
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            SELECT id, name, model_type, parameters, training_count, 
+                   rmse, r_squared, mae, created_at, is_active, notes
+            FROM trained_models
+            ORDER BY created_at DESC
+        """)
+        
+        models = []
+        for row in cursor.fetchall():
+            models.append({
+                'id': row[0],
+                'name': row[1],
+                'type': row[2],
+                'parameters': row[3],
+                'training_count': row[4],
+                'rmse': float(row[5]) if row[5] else 0,
+                'r_squared': float(row[6]) if row[6] else 0,
+                'mae': float(row[7]) if row[7] else 0,
+                'created_at': row[8].isoformat() if row[8] else None,
+                'is_active': row[9],
+                'notes': row[10]
+            })
+        
+        print(f"Found {len(models)} trained models")
+        if models:
+            print(f"First model: {models[0]['name']}")
+        
+        emit('trained_models_result', {
+            'success': True,
+            'models': models
+        })
+        
+    except Exception as e:
+        print(f"Get trained models error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('trained_models_result', {
+            'success': False,
+            'message': f'Error: {str(e)}'
+        })
+
+
+@socketio.on('activate_model')
+def handle_activate_model(data):
+    """Set a model as active (deactivate others)"""
+    try:
+        model_name = data.get('model_name')
+        if not db_conn or not model_name:
+            emit('model_activated', {'success': False})
+            return
+            
+        cursor = db_conn.cursor()
+        # Deactivate all models
+        cursor.execute("UPDATE trained_models SET is_active = FALSE")
+        # Activate selected model
+        cursor.execute("UPDATE trained_models SET is_active = TRUE WHERE name = %s", (model_name,))
+        db_conn.commit()
+        
+        emit('model_activated', {'success': True, 'model_name': model_name})
+        
+    except Exception as e:
+        print(f"Activate model error: {e}")
+        emit('model_activated', {'success': False, 'message': str(e)})
+
+
+@socketio.on('deactivate_model')
+def handle_deactivate_model(data):
+    """Deactivate a model"""
+    try:
+        model_name = data.get('model_name')
+        if not db_conn or not model_name:
+            emit('model_deactivated', {'success': False})
+            return
+            
+        cursor = db_conn.cursor()
+        cursor.execute("UPDATE trained_models SET is_active = FALSE WHERE name = %s", (model_name,))
+        db_conn.commit()
+        
+        emit('model_deactivated', {'success': True, 'model_name': model_name})
+        
+    except Exception as e:
+        print(f"Deactivate model error: {e}")
+        emit('model_deactivated', {'success': False, 'message': str(e)})
+
+
+@socketio.on('delete_model')
+def handle_delete_model(data):
+    """Delete a model from database"""
+    try:
+        model_name = data.get('model_name')
+        if not db_conn or not model_name:
+            emit('model_deleted', {'success': False})
+            return
+            
+        cursor = db_conn.cursor()
+        cursor.execute("DELETE FROM trained_models WHERE name = %s", (model_name,))
+        db_conn.commit()
+        
+        emit('model_deleted', {'success': True, 'model_name': model_name})
+        
+    except Exception as e:
+        print(f"Delete model error: {e}")
+        emit('model_deleted', {'success': False, 'message': str(e)})
+
+
+@socketio.on('update_model_notes')
+def handle_update_model_notes(data):
+    """Update model notes/description"""
+    try:
+        model_name = data.get('model_name')
+        notes = data.get('notes', '')
+        
+        if not db_conn or not model_name:
+            emit('model_notes_updated', {'success': False})
+            return
+            
+        cursor = db_conn.cursor()
+        cursor.execute("UPDATE trained_models SET notes = %s WHERE name = %s", (notes, model_name))
+        db_conn.commit()
+        
+        emit('model_notes_updated', {'success': True, 'model_name': model_name})
+        
+    except Exception as e:
+        print(f"Update model notes error: {e}")
+        emit('model_notes_updated', {'success': False, 'message': str(e)})
 
 
 if __name__ == '__main__':

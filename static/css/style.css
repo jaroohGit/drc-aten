@@ -511,20 +511,20 @@ body {
 
 .chart-wrapper {
     position: relative;
-    height: 180px;
-    min-height: 150px;
-    max-height: 300px;
+    height: 216px;
+    min-height: 180px;
+    max-height: 360px;
 }
 
 @media (min-width: 1200px) {
     .chart-wrapper {
-        height: 200px;
+        height: 240px;
     }
 }
 
 @media (min-width: 1600px) {
     .chart-wrapper {
-        height: 220px;
+        height: 264px;
     }
 }
 
@@ -573,6 +573,247 @@ body {
     text-align: center;
     color: var(--text-secondary);
     padding: 40px !important;
+}
+
+/* Dataset Table Input Styles */
+.dataset-input {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: inherit;
+    background: white;
+    transition: border-color 0.2s;
+}
+
+.dataset-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+.dataset-input:hover {
+    border-color: #94a3b8;
+}
+
+/* Models Page Styles */
+.model-card {
+    background: white;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.model-card:hover {
+    border-color: #3b82f6;
+    box-shadow: 0 8px 16px rgba(59, 130, 246, 0.1);
+    transform: translateY(-2px);
+}
+
+.model-card.active-model {
+    border-color: #10b981;
+    background: linear-gradient(to bottom, #ecfdf5 0%, white 100%);
+}
+
+.model-card.inactive-model {
+    opacity: 0.6;
+    border-color: #d1d5db;
+}
+
+.model-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.model-badge.linear {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.model-badge.polynomial {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.model-badge.svr {
+    background: #f3e8ff;
+    color: #6b21a8;
+}
+
+.model-badge.random-forest {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.model-badge.active {
+    background: #10b981;
+    color: white;
+}
+
+.model-badge.inactive {
+    background: #9ca3af;
+    color: white;
+}
+
+.metric-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.metric-badge.excellent {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.metric-badge.good {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.metric-badge.fair {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.metric-badge.poor {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.model-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f3f4f6;
+}
+
+.model-card-title {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #1f2937;
+    margin-bottom: 5px;
+}
+
+.model-card-meta {
+    font-size: 0.75em;
+    color: #6b7280;
+    margin-top: 3px;
+}
+
+.model-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.metric-item {
+    text-align: center;
+    padding: 10px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+}
+
+.metric-label {
+    font-size: 0.7em;
+    color: #6b7280;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 5px;
+}
+
+.metric-value {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.model-formula {
+    background: #f9fafb;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85em;
+    color: #374151;
+    margin: 10px 0;
+    border-left: 3px solid #3b82f6;
+}
+
+.model-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #e5e7eb;
+}
+
+.model-actions button {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 0.85em;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.model-actions button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.performance-indicator {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+.performance-indicator.excellent {
+    background: #10b981;
+}
+
+.performance-indicator.good {
+    background: #3b82f6;
+}
+
+.performance-indicator.fair {
+    background: #f59e0b;
+}
+
+.performance-indicator.poor {
+    background: #ef4444;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
 }
 
 /* Responsive */
@@ -1569,4 +1810,65 @@ body {
     .drc-card .stat-value {
         font-size: 2em;
     }
+}
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    max-width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--light-bg);
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.btn-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.3s;
+}
+
+.btn-close:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 20px;
 }
