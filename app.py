@@ -2637,9 +2637,9 @@ def handle_load_dataset(params):
         
         # Build query based on mode - using batch_weights JOIN with measurement_summary
         if mode == 'complete':
-            # Load only records with all required fields
+            # Load only records with all required fields (one row per slip_no)
             query = """
-                SELECT DISTINCT
+                SELECT DISTINCT ON (bw.slip_no)
                     bw.slip_no,
                     bw.sampling_no,
                     bw.weight_gross,
@@ -2655,13 +2655,13 @@ def handle_load_dataset(params):
                   AND bw.factor IS NOT NULL
                   AND bw.drc_percent IS NOT NULL
                   AND ms.s21_rms IS NOT NULL
-                ORDER BY ms.time DESC
+                ORDER BY bw.slip_no, ms.time DESC
                 LIMIT 200
             """
         elif mode == 'for_input':
-            # Load records with S21 data but missing weight fields
+            # Load records with S21 data but missing weight fields (one row per slip_no)
             query = """
-                SELECT DISTINCT
+                SELECT DISTINCT ON (ms.slip_no)
                     ms.slip_no,
                     ms.sampling_no,
                     bw.weight_gross,
@@ -2676,12 +2676,12 @@ def handle_load_dataset(params):
                   AND ms.slip_no IS NOT NULL
                   AND ms.sampling_no IS NOT NULL
                   AND (bw.weight_gross IS NULL OR bw.weight_net IS NULL OR bw.factor IS NULL)
-                ORDER BY ms.time DESC
+                ORDER BY ms.slip_no, ms.time DESC
                 LIMIT 200
             """
         else:  # all
             query = """
-                SELECT DISTINCT
+                SELECT DISTINCT ON (COALESCE(bw.slip_no, ms.slip_no))
                     COALESCE(bw.slip_no, ms.slip_no) as slip_no,
                     COALESCE(bw.sampling_no, ms.sampling_no) as sampling_no,
                     bw.weight_gross,
@@ -2694,7 +2694,7 @@ def handle_load_dataset(params):
                 FULL OUTER JOIN batch_weights bw ON ms.slip_no = bw.slip_no AND ms.sampling_no = bw.sampling_no
                 WHERE COALESCE(bw.slip_no, ms.slip_no) IS NOT NULL
                   AND COALESCE(bw.sampling_no, ms.sampling_no) IS NOT NULL
-                ORDER BY ms.time DESC NULLS LAST
+                ORDER BY COALESCE(bw.slip_no, ms.slip_no), ms.time DESC NULLS LAST
                 LIMIT 200
             """
         
