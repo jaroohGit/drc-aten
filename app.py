@@ -338,34 +338,60 @@ def init_database():
         """)
         print("  ✓ Batch items table created")
         
-        # Create drc_crep table for DRC weight data per batch
+        # Create batch_measurements table for grouping measurements by batch
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS drc_crep (
+            CREATE TABLE IF NOT EXISTS batch_measurements (
                 id SERIAL PRIMARY KEY,
                 slip_no VARCHAR(50) NOT NULL,
-                sampling_no VARCHAR(50) NOT NULL,
-                test_no VARCHAR(50),
-                measurement_id INTEGER,
-                weight_gross NUMERIC(10, 3),
-                weight_net NUMERIC(10, 3),
-                factor NUMERIC(10, 6),
-                s11_avg NUMERIC(10, 3),
-                s21_avg NUMERIC(10, 3),
-                status VARCHAR(20) DEFAULT 'pending',
+                batch_timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                total_samples INTEGER DEFAULT 0,
+                avg_drc NUMERIC(10, 2),
+                avg_s21 NUMERIC(10, 2),
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (slip_no, sampling_no, test_no)
+                UNIQUE (slip_no)
             );
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_drc_crep_slip_sampling 
-            ON drc_crep (slip_no, sampling_no);
+            CREATE INDEX IF NOT EXISTS idx_batch_measurements_slip 
+            ON batch_measurements (slip_no);
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_drc_crep_measurement_id 
-            ON drc_crep (measurement_id);
+            CREATE INDEX IF NOT EXISTS idx_batch_measurements_timestamp 
+            ON batch_measurements (batch_timestamp);
         """)
-        print("  ✓ DRC CREP table created")
+        print("  ✓ Batch measurements table created")
+        
+        # Create batch_measurement_samples table for individual samples
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS batch_measurement_samples (
+                id SERIAL PRIMARY KEY,
+                batch_id INTEGER NOT NULL REFERENCES batch_measurements(id) ON DELETE CASCADE,
+                slip_no VARCHAR(50) NOT NULL,
+                sampling_no VARCHAR(50) NOT NULL,
+                weight_gross NUMERIC(10, 2),
+                weight_net NUMERIC(10, 2),
+                factor NUMERIC(10, 2),
+                drc_percent NUMERIC(10, 2),
+                s21_avg NUMERIC(10, 2),
+                measurement_timestamp TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (slip_no, sampling_no, measurement_timestamp)
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_samples_batch_id 
+            ON batch_measurement_samples (batch_id);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_samples_slip 
+            ON batch_measurement_samples (slip_no);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_batch_samples_timestamp 
+            ON batch_measurement_samples (measurement_timestamp);
+        """)
+        print("  ✓ Batch measurement samples table created")
         
         db_conn.commit()
         cursor.close()
@@ -456,7 +482,6 @@ def save_measurement_to_db(data):
             INSERT INTO measurement_summary 
             (time, sweep_count, s11_rms, s11_max, s11_min, s21_rms, s21_max, s21_min, signal_quality, batch_id, slip_no, sampling_no, test_no)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
         """, (
             timestamp,
             data['sweep_count'],
@@ -472,70 +497,6 @@ def save_measurement_to_db(data):
             sampling_no,
             test_no
         ))
-        
-        measurement_id = cursor.fetchone()[0]
-        
-        # Check if weight data exists in batch_weights table
-        cursor.execute("""
-            SELECT weight_gross, weight_net, factor 
-            FROM batch_weights 
-            WHERE slip_no = %s AND sampling_no = %s
-            LIMIT 1
-        """, (slip_no, sampling_no))
-        
-        weight_data = cursor.fetchone()
-        
-        # Insert or update drc_crep with weight data if available
-        if weight_data and all(v is not None for v in weight_data):
-            weight_gross, weight_net, factor = weight_data
-            
-            # Insert/update drc_crep record
-            cursor.execute("""
-                INSERT INTO drc_crep 
-                (slip_no, sampling_no, test_no, measurement_id, weight_gross, weight_net, factor, 
-                 s11_avg, s21_avg, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'complete')
-                ON CONFLICT (slip_no, sampling_no, test_no)
-                DO UPDATE SET
-                    measurement_id = EXCLUDED.measurement_id,
-                    weight_gross = EXCLUDED.weight_gross,
-                    weight_net = EXCLUDED.weight_net,
-                    factor = EXCLUDED.factor,
-                    s11_avg = EXCLUDED.s11_avg,
-                    s21_avg = EXCLUDED.s21_avg,
-                    status = 'complete',
-                    updated_at = CURRENT_TIMESTAMP
-            """, (
-                slip_no,
-                sampling_no,
-                test_no,
-                measurement_id,
-                weight_gross,
-                weight_net,
-                factor,
-                data['summary']['avg_db'],
-                data['summary']['s21_avg_db']
-            ))
-        else:
-            # Insert pending record
-            cursor.execute("""
-                INSERT INTO drc_crep 
-                (slip_no, sampling_no, test_no, measurement_id, s11_avg, s21_avg, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
-                ON CONFLICT (slip_no, sampling_no, test_no)
-                DO UPDATE SET
-                    measurement_id = EXCLUDED.measurement_id,
-                    s11_avg = EXCLUDED.s11_avg,
-                    s21_avg = EXCLUDED.s21_avg,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (
-                slip_no,
-                sampling_no,
-                test_no,
-                measurement_id,
-                data['summary']['avg_db'],
-                data['summary']['s21_avg_db']
-            ))
         
         db_conn.commit()
         cursor.close()
@@ -2225,6 +2186,276 @@ def handle_save_batch_items(data):
         })
 
 
+@socketio.on('save_batch_measurement')
+def handle_save_batch_measurement(data):
+    """Save batch measurement with samples (grouped by slip_no)"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('batch_measurement_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        slip_no = data.get('slip_no')
+        samples = data.get('samples', [])
+        
+        if not slip_no:
+            emit('batch_measurement_result', {
+                'success': False,
+                'message': 'Slip No. is required'
+            })
+            return
+        
+        if not samples or len(samples) == 0:
+            emit('batch_measurement_result', {
+                'success': False,
+                'message': 'At least one sample is required'
+            })
+            return
+        
+        cursor = db_conn.cursor()
+        
+        # Calculate averages
+        valid_drc = [s.get('drc_percent') for s in samples if s.get('drc_percent') is not None]
+        valid_s21 = [s.get('s21_avg') for s in samples if s.get('s21_avg') is not None]
+        
+        avg_drc = sum(valid_drc) / len(valid_drc) if valid_drc else None
+        avg_s21 = sum(valid_s21) / len(valid_s21) if valid_s21 else None
+        
+        # Insert or update batch_measurements
+        cursor.execute("""
+            INSERT INTO batch_measurements 
+            (slip_no, total_samples, avg_drc, avg_s21, batch_timestamp, updated_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (slip_no) 
+            DO UPDATE SET 
+                total_samples = EXCLUDED.total_samples,
+                avg_drc = EXCLUDED.avg_drc,
+                avg_s21 = EXCLUDED.avg_s21,
+                batch_timestamp = EXCLUDED.batch_timestamp,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+        """, (slip_no, len(samples), avg_drc, avg_s21))
+        
+        batch_id = cursor.fetchone()[0]
+        
+        # Delete existing samples for this batch
+        cursor.execute("""
+            DELETE FROM batch_measurement_samples 
+            WHERE batch_id = %s
+        """, (batch_id,))
+        
+        # Insert new samples
+        samples_saved = 0
+        for sample in samples:
+            cursor.execute("""
+                INSERT INTO batch_measurement_samples 
+                (batch_id, slip_no, sampling_no, weight_gross, weight_net, 
+                 factor, drc_percent, s21_avg, measurement_timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                batch_id,
+                slip_no,
+                sample.get('sampling_no'),
+                sample.get('weight_gross'),
+                sample.get('weight_net'),
+                sample.get('factor'),
+                sample.get('drc_percent'),
+                sample.get('s21_avg'),
+                sample.get('timestamp')
+            ))
+            samples_saved += 1
+        
+        db_conn.commit()
+        cursor.close()
+        
+        emit('batch_measurement_result', {
+            'success': True,
+            'message': f'Saved batch {slip_no} with {samples_saved} samples',
+            'batch_id': batch_id,
+            'samples_saved': samples_saved,
+            'avg_drc': float(avg_drc) if avg_drc else None,
+            'avg_s21': float(avg_s21) if avg_s21 else None
+        })
+        
+    except Exception as e:
+        db_conn.rollback()
+        print(f"Save batch measurement error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('batch_measurement_result', {
+            'success': False,
+            'message': f'Save error: {str(e)}'
+        })
+
+
+@socketio.on('load_batch_measurement')
+def handle_load_batch_measurement(params):
+    """Load batch measurement with all samples"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('batch_measurement_loaded', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        slip_no = params.get('slip_no')
+        
+        if not slip_no:
+            emit('batch_measurement_loaded', {
+                'success': False,
+                'message': 'Slip No. is required'
+            })
+            return
+        
+        cursor = db_conn.cursor()
+        
+        # Get batch info
+        cursor.execute("""
+            SELECT 
+                id, slip_no, batch_timestamp, total_samples, 
+                avg_drc, avg_s21, created_at, updated_at
+            FROM batch_measurements
+            WHERE slip_no = %s
+        """, (slip_no,))
+        
+        batch_row = cursor.fetchone()
+        
+        if not batch_row:
+            emit('batch_measurement_loaded', {
+                'success': False,
+                'message': f'No batch found for slip_no: {slip_no}'
+            })
+            cursor.close()
+            return
+        
+        batch_info = {
+            'id': batch_row[0],
+            'slip_no': batch_row[1],
+            'batch_timestamp': batch_row[2].isoformat() if batch_row[2] else None,
+            'total_samples': batch_row[3],
+            'avg_drc': float(batch_row[4]) if batch_row[4] else None,
+            'avg_s21': float(batch_row[5]) if batch_row[5] else None,
+            'created_at': batch_row[6].isoformat() if batch_row[6] else None,
+            'updated_at': batch_row[7].isoformat() if batch_row[7] else None
+        }
+        
+        # Get samples
+        cursor.execute("""
+            SELECT 
+                id, sampling_no, weight_gross, weight_net, factor,
+                drc_percent, s21_avg, measurement_timestamp, created_at
+            FROM batch_measurement_samples
+            WHERE batch_id = %s
+            ORDER BY measurement_timestamp ASC
+        """, (batch_info['id'],))
+        
+        sample_rows = cursor.fetchall()
+        cursor.close()
+        
+        samples = []
+        for row in sample_rows:
+            samples.append({
+                'id': row[0],
+                'sampling_no': row[1],
+                'weight_gross': float(row[2]) if row[2] else None,
+                'weight_net': float(row[3]) if row[3] else None,
+                'factor': float(row[4]) if row[4] else None,
+                'drc_percent': float(row[5]) if row[5] else None,
+                's21_avg': float(row[6]) if row[6] else None,
+                'measurement_timestamp': row[7].isoformat() if row[7] else None,
+                'created_at': row[8].isoformat() if row[8] else None
+            })
+        
+        emit('batch_measurement_loaded', {
+            'success': True,
+            'batch': batch_info,
+            'samples': samples,
+            'sample_count': len(samples)
+        })
+        
+    except Exception as e:
+        print(f"Load batch measurement error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('batch_measurement_loaded', {
+            'success': False,
+            'message': f'Load error: {str(e)}'
+        })
+
+
+@socketio.on('query_batch_measurements')
+def handle_query_batch_measurements(params):
+    """Query batch measurements with pagination"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('batch_measurements_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        limit = params.get('limit', 50)
+        offset = params.get('offset', 0)
+        
+        cursor = db_conn.cursor()
+        
+        # Get batches with sample count
+        cursor.execute("""
+            SELECT 
+                bm.id, bm.slip_no, bm.batch_timestamp, bm.total_samples,
+                bm.avg_drc, bm.avg_s21, bm.created_at, bm.updated_at,
+                COUNT(bms.id) as actual_sample_count
+            FROM batch_measurements bm
+            LEFT JOIN batch_measurement_samples bms ON bm.id = bms.batch_id
+            GROUP BY bm.id, bm.slip_no, bm.batch_timestamp, bm.total_samples,
+                     bm.avg_drc, bm.avg_s21, bm.created_at, bm.updated_at
+            ORDER BY bm.batch_timestamp DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        
+        rows = cursor.fetchall()
+        
+        # Get total count
+        cursor.execute("SELECT COUNT(*) FROM batch_measurements")
+        total_count = cursor.fetchone()[0]
+        
+        cursor.close()
+        
+        batches = []
+        for row in rows:
+            batches.append({
+                'id': row[0],
+                'slip_no': row[1],
+                'batch_timestamp': row[2].isoformat() if row[2] else None,
+                'total_samples': row[3],
+                'avg_drc': float(row[4]) if row[4] else None,
+                'avg_s21': float(row[5]) if row[5] else None,
+                'created_at': row[6].isoformat() if row[6] else None,
+                'updated_at': row[7].isoformat() if row[7] else None,
+                'actual_sample_count': row[8]
+            })
+        
+        emit('batch_measurements_result', {
+            'success': True,
+            'batches': batches,
+            'total': total_count,
+            'limit': limit,
+            'offset': offset
+        })
+        
+    except Exception as e:
+        print(f"Query batch measurements error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('batch_measurements_result', {
+            'success': False,
+            'message': f'Query error: {str(e)}'
+        })
+
+
 @socketio.on('load_batch_items')
 def handle_load_batch_items(params):
     """Load product/item details for a batch"""
@@ -2288,9 +2519,6 @@ def handle_load_batch_items(params):
             'success': False,
             'message': f'Load error: {str(e)}'
         })
-
-
-# ==================== Model Training ====================
 
 
 @socketio.on('get_batch_with_items')
@@ -2407,26 +2635,22 @@ def handle_load_dataset(params):
         cursor = db_conn.cursor()
         mode = params.get('mode', 'complete')
         
-        # Build query based on mode - load from measurement_summary first
+        # Build query based on mode - using batch_weights JOIN with measurement_summary
         if mode == 'complete':
             # Load only records with all required fields
             query = """
-                SELECT 
-                    ms.slip_no,
-                    ms.sampling_no,
+                SELECT DISTINCT
+                    bw.slip_no,
+                    bw.sampling_no,
                     bw.weight_gross,
                     bw.weight_net,
                     bw.factor,
                     bw.drc_percent,
                     ms.s21_rms as s21_avg,
                     ms.time as timestamp
-                FROM measurement_summary ms
-                INNER JOIN batch_weights bw ON 
-                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
-                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
-                WHERE ms.slip_no IS NOT NULL 
-                  AND ms.sampling_no IS NOT NULL
-                  AND bw.weight_gross IS NOT NULL 
+                FROM batch_weights bw
+                INNER JOIN measurement_summary ms ON bw.slip_no = ms.slip_no AND bw.sampling_no = ms.sampling_no
+                WHERE bw.weight_gross IS NOT NULL 
                   AND bw.weight_net IS NOT NULL 
                   AND bw.factor IS NOT NULL
                   AND bw.drc_percent IS NOT NULL
@@ -2435,9 +2659,9 @@ def handle_load_dataset(params):
                 LIMIT 200
             """
         elif mode == 'for_input':
-            # Load records with S21 data but missing weight fields (for manual input)
+            # Load records with S21 data but missing weight fields
             query = """
-                SELECT 
+                SELECT DISTINCT
                     ms.slip_no,
                     ms.sampling_no,
                     bw.weight_gross,
@@ -2447,21 +2671,19 @@ def handle_load_dataset(params):
                     ms.s21_rms as s21_avg,
                     ms.time as timestamp
                 FROM measurement_summary ms
-                LEFT JOIN batch_weights bw ON 
-                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
-                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
-                WHERE ms.slip_no IS NOT NULL 
+                LEFT JOIN batch_weights bw ON ms.slip_no = bw.slip_no AND ms.sampling_no = bw.sampling_no
+                WHERE ms.s21_rms IS NOT NULL
+                  AND ms.slip_no IS NOT NULL
                   AND ms.sampling_no IS NOT NULL
-                  AND ms.s21_rms IS NOT NULL
                   AND (bw.weight_gross IS NULL OR bw.weight_net IS NULL OR bw.factor IS NULL)
                 ORDER BY ms.time DESC
                 LIMIT 200
             """
-        else:  # all - แสดงทุก record ที่มี measurement
+        else:  # all
             query = """
-                SELECT 
-                    ms.slip_no,
-                    ms.sampling_no,
+                SELECT DISTINCT
+                    COALESCE(bw.slip_no, ms.slip_no) as slip_no,
+                    COALESCE(bw.sampling_no, ms.sampling_no) as sampling_no,
                     bw.weight_gross,
                     bw.weight_net,
                     bw.factor,
@@ -2469,20 +2691,16 @@ def handle_load_dataset(params):
                     ms.s21_rms as s21_avg,
                     ms.time as timestamp
                 FROM measurement_summary ms
-                LEFT JOIN batch_weights bw ON 
-                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
-                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
-                WHERE ms.slip_no IS NOT NULL 
-                  AND ms.sampling_no IS NOT NULL
-                ORDER BY ms.time DESC
+                FULL OUTER JOIN batch_weights bw ON ms.slip_no = bw.slip_no AND ms.sampling_no = bw.sampling_no
+                WHERE COALESCE(bw.slip_no, ms.slip_no) IS NOT NULL
+                  AND COALESCE(bw.sampling_no, ms.sampling_no) IS NOT NULL
+                ORDER BY ms.time DESC NULLS LAST
                 LIMIT 200
             """
         
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
-        
-        print(f"✓ Loaded {len(rows)} records from database (mode: {mode})")
         
         # Format results
         records = []
@@ -2505,8 +2723,6 @@ def handle_load_dataset(params):
                 's21_avg': round(row[6], 2) if row[6] else None,
                 'timestamp': row[7].isoformat() if row[7] else None
             })
-        
-        print(f"✓ Formatted {len(records)} records for client")
         
         emit('dataset_loaded', {
             'success': True,

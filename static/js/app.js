@@ -2537,8 +2537,6 @@ function saveDataset() {
 
 // Socket event handlers for dataset
 socket.on('dataset_loaded', (data) => {
-    console.log('Dataset loaded:', data);
-    
     if (data.success) {
         const loadMode = data.mode || 'all';
         
@@ -2553,8 +2551,6 @@ socket.on('dataset_loaded', (data) => {
             s21_avg: r.s21_avg || '',
             timestamp: r.timestamp || new Date().toISOString()
         }));
-        
-        console.log('DatasetRecords:', datasetRecords);
         renderDatasetTable();
         updateDatasetStats();
         
@@ -2568,7 +2564,6 @@ socket.on('dataset_loaded', (data) => {
         document.getElementById('datasetStatus').textContent = statusMsg;
         showNotification(statusMsg, 'success');
     } else {
-        console.error('Dataset load failed:', data.message);
         document.getElementById('datasetStatus').textContent = 'Load failed';
         showNotification(data.message || 'Failed to load dataset', 'error');
     }
@@ -3189,5 +3184,3 @@ document.getElementById('deleteModelBtn')?.addEventListener('click', () => {
 setTimeout(() => {
     loadTrainedModels();
 }, 2000);
-
-// DRC CREP data is now automatically managed through save_measurement
