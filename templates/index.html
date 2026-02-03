@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>DRC Online - Premeir System Engineering</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <button class="menu-toggle" id="menuToggle">☰</button>
+            <h1 class="header-title">DRC Online</h1>
+            <span class="company-name">Premeir System Engineering Co.ltd</span>
+        </div>
+        <div class="header-right">
+            <div class="connection-status" id="connectionStatus">
+                <span class="dot"></span>
+                <span>Disconnected</span>
+            </div>
+            <div class="current-time" id="currentTime">--:--:--</div>
+        </div>
+    </header>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>Control Panel</h2>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-page="dashboard">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-page="analysis">
+                <span class="nav-icon">🔬</span>
+                <span class="nav-text">Analysis</span>
+            </a>
+            <a href="#" class="nav-item" data-page="settings">
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-text">Settings</span>
+            </a>
+            <a href="#" class="nav-item" data-page="data">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">Data View</span>
+            </a>
+            <a href="#" class="nav-item" data-page="dataview">
+                <span class="nav-icon">📋</span>
+                <span class="nav-text">Data Point</span>
+            </a>
+            <a href="#" class="nav-item" data-page="history">
+                <span class="nav-icon">🗄️</span>
+                <span class="nav-text">Historical Data</span>
+            </a>
+            <a href="#" class="nav-item" data-page="models">
+                <span class="nav-icon">🤖</span>
+                <span class="nav-text">Models</span>
+            </a>
+        </nav>
+        
+        <div class="sidebar-controls">
+            <h3>Sweep Control</h3>
+            <button class="btn btn-success" id="startBtn">▶ Start Sweep</button>
+            <button class="btn btn-danger" id="stopBtn" disabled>⏹ Stop Sweep</button>
+            
+            <div class="config-info">
+                <h3>Configuration</h3>
+                <div class="config-item">
+                    <span class="config-label">Port:</span>
+                    <span class="config-value" id="configPort">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Frequency:</span>
+                    <span class="config-value" id="configFreq">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Points:</span>
+                    <span class="config-value" id="configPoints">--</span>
+                </div>
+                <div class="config-item">
+                    <span class="config-label">Interval:</span>
+                    <span class="config-value" id="configInterval">--</span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="mainContent">
+        <!-- Dashboard Page -->
+        <div class="page active" id="dashboardPage">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📡</div>
+                    <div class="stat-info">
+                        <div class="stat-label">Sweep Count</div>
+                        <div class="stat-value" id="sweepCount">0</div>
+                    </div>
+                </div>
+                
+                <!-- Active Model Status Card -->
+                <div class="stat-card" style="grid-column: span 2;">
+                    <div class="stat-icon">🤖</div>
+                    <div class="stat-info" style="width: 100%;">
+                        <div class="stat-label">Active DRC Model</div>
+                        <div class="stat-value" id="activeModelName" style="font-size: 1.1em; color: #059669;">
+                            No model selected
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-top: 8px; font-size: 0.85em; color: #6b7280;">
+                            <span id="activeModelType">--</span>
+                            <span>•</span>
+                            <span id="activeModelR2">R²: --</span>
+                            <span>•</span>
+                            <span id="activeModelRMSE">RMSE: --</span>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="switchPage('models')" 
+                                style="width: 100%; margin-top: 10px; padding: 6px; font-size: 0.85em;">
+                            🎓 Manage Models
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Batch Info Card (Slip No. + Sampling No.) -->
+                <div class="stat-card" style="grid-column: span 2;">
+                    <div style="padding: 12px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                            <div>
+                                <label style="font-size: 0.8em; color: #6b7280; display: block; margin-bottom: 6px; font-weight: 500;">📋 Slip No.</label>
+                                <input type="text" id="slipNoInput" placeholder="Slip number" 
+                                       style="width: 100%; padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 0.95em; font-weight: 500; transition: border-color 0.2s;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #6b7280; display: block; margin-bottom: 6px; font-weight: 500;">🧪 Sampling No.</label>
+                                <input type="text" id="samplingNoInput" placeholder="Sample number" 
+                                       style="width: 100%; padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 0.95em; font-weight: 500; transition: border-color 0.2s;">
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="applyManualBatchBtn" 
+                                style="width: 100%; padding: 8px; font-size: 0.9em; font-weight: 600;">
+                            ✓ Apply Batch Info
+                        </button>
+                        <div style="font-size: 0.7em; color: #9ca3af; margin-top: 6px; text-align: center;">
+                            Click to prepare batch info for next save
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Save Data Card -->
+                <div class="stat-card save-card" style="grid-column: span 2;">
+                    <div class="save-card-content">
+                        <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <div style="flex: 0 0 140px;">
+                                <label style="font-size: 0.75em; color: #6b7280; display: block; margin-bottom: 4px; font-weight: 500;">Test No.</label>
+                                <select id="testNoSelect" 
+                                        style="width: 100%; padding: 8px 10px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 0.9em; font-weight: 600; background: white; cursor: pointer;">
+                                    <option value="Test01">Test01</option>
+                                    <option value="Test02">Test02</option>
+                                </select>
+                            </div>
+                            <div style="flex: 1;">
+                                <button class="btn-save" id="saveDataBtn" title="Save current measurement" 
+                                        style="width: 100%; margin-top: 20px;">
+                                    💾 Save Data
+                                </button>
+                            </div>
+                        </div>
+                        <div class="last-saved-info" id="lastSavedInfo">
+                            <span class="last-saved-label">Last Saved:</span>
+                            <span class="last-saved-time" id="lastSavedTime">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- DRC Result Card -->
+                <div class="stat-card drc-card" id="drcResultCard" style="grid-column: span 2;">
+                    <div class="stat-icon">🎯</div>
+                    <div class="stat-info">
+                        <div class="stat-label" id="drcBatchIdDisplay">Batch: --</div>
+                        <div class="stat-value drc-stat-value" id="drcValueDisplay">--%</div>
+                        <div class="stat-subtitle" id="drcFormulaDisplay" style="font-size: 0.7em; color: #6b7280; margin-top: 4px;">DRC% = m × S21 + b</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Scan Progress Section -->
+            <div id="scanProgressSection" class="scan-progress-section" style="display: none;">
+                <div class="content-card">
+                    <h3>🔄 Scan in Progress</h3>
+                    <div class="scan-info">
+                        <div class="scan-stats">
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Elapsed Time:</span>
+                                <span class="scan-stat-value" id="scanElapsedTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Total Time:</span>
+                                <span class="scan-stat-value" id="scanTotalTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Samples Collected:</span>
+                                <span class="scan-stat-value" id="scanSamplesCount">0</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                            <span class="progress-text" id="scanProgressText">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="cancelScanBtn">⏹ Cancel Scan</button>
+                </div>
+            </div>
+            <!-- Scan Progress Section -->
+            <div id="scanProgressSection" class="scan-progress-section" style="display: none;">
+                <div class="content-card">
+                    <h3>🔄 Scan in Progress</h3>
+                    <div class="scan-info">
+                        <div class="scan-stats">
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Elapsed Time:</span>
+                                <span class="scan-stat-value" id="scanElapsedTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Total Time:</span>
+                                <span class="scan-stat-value" id="scanTotalTime">0s</span>
+                            </div>
+                            <div class="scan-stat-item">
+                                <span class="scan-stat-label">Samples Collected:</span>
+                                <span class="scan-stat-value" id="scanSamplesCount">0</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="scanProgressBar"></div>
+                            <span class="progress-text" id="scanProgressText">0%</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-danger" id="cancelScanBtn">⏹ Cancel Scan</button>
+                </div>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-card" style="grid-column: 1 / -1;">
+                    <div class="chart-header">
+                        <h3>Historical Data - Average, Max, Min (Last 5 Minutes)</h3>
+                        <span class="chart-subtitle">Time Series View</span>
+                    </div>
+                    <div class="chart-wrapper" style="height: 320px;">
+                        <canvas id="historicalChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>S11 Magnitude (dB) vs Frequency</h3>
+                        <span class="chart-subtitle" id="lastUpdate">Last update: --</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-around; padding: 10px; background: #f9fafb; border-radius: 8px; margin-bottom: 10px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📊 Avg</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #3b82f6;" id="avgDb">--</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📈 Max</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #10b981;" id="maxDb">--</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📉 Min</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #ef4444;" id="minDb">--</div>
+                            <div style="font-size: 0.65em; color: #9ca3af; margin-top: 2px;" id="minDbFreq">--</div>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="dbChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>S21 Magnitude (dB) vs Frequency</h3>
+                    </div>
+                    <div style="display: flex; justify-content: space-around; padding: 10px; background: #f9fafb; border-radius: 8px; margin-bottom: 10px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📊 Avg</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #3b82f6;" id="avgS21">--</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📈 Max</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #10b981;" id="maxS21">--</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">📉 Min</div>
+                            <div style="font-size: 1.25em; font-weight: bold; color: #ef4444;" id="minS21">--</div>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="s21Chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div class="page" id="settingsPage">
+            <div class="content-card">
+                <h2>Settings</h2>
+                
+                <!-- Connection Settings -->
+                <div class="settings-section">
+                    <h3>📡 Connection Settings</h3>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">COM Port:</label>
+                        <div class="port-select-wrapper">
+                            <select id="portSelect" class="setting-input">
+                                <option value="">-- Select Port --</option>
+                            </select>
+                            <button class="btn btn-primary btn-sm" id="scanPortsBtn">🔄 Scan Ports</button>
+                            <button class="btn btn-success btn-sm" id="testConnectionBtn">🔌 Test Connection</button>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">Connection Status:</label>
+                        <div class="connection-status-display">
+                            <div class="status-badge" id="deviceStatus">
+                                <span class="status-indicator"></span>
+                                <span class="status-text">Disconnected</span>
+                            </div>
+                            <div class="status-details" id="statusDetails">
+                                <div class="status-item">
+                                    <span class="status-item-label">Port:</span>
+                                    <span class="status-item-value" id="statusPort">--</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-item-label">Last Sweep:</span>
+                                    <span class="status-item-value" id="statusLastSweep">--</span>
+                                </div>
+                                <div class="status-item">
+                                    <span class="status-item-label">Signal Quality:</span>
+                                    <div class="signal-quality-bar">
+                                        <div class="signal-quality-fill" id="signalQualityFill" style="width: 0%"></div>
+                                        <span class="signal-quality-text" id="signalQualityText">0%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Frequency Settings -->
+                <div class="settings-section">
+                    <h3>📊 Sweep Configuration</h3>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="startFreqInput">Start Frequency (GHz):</label>
+                        <input type="number" id="startFreqInput" class="setting-input" step="0.01" min="0.05" max="4.4" value="0.9">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="stopFreqInput">Stop Frequency (GHz):</label>
+                        <input type="number" id="stopFreqInput" class="setting-input" step="0.01" min="0.05" max="4.4" value="0.95">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="pointsInput">Points:</label>
+                        <input type="number" id="pointsInput" class="setting-input" step="1" min="11" max="201" value="101">
+                    </div>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label" for="intervalInput">Sweep Interval (ms):</label>
+                        <input type="number" id="intervalInput" class="setting-input" step="100" min="500" max="10000" value="1000">
+                    </div>
+                    
+                    <button class="btn btn-primary" id="updateConfigBtn">💾 Save Configuration</button>
+                </div>
+                
+                <!-- Reference Lines Settings -->
+                <div class="settings-section">
+                    <h3>📏 Reference Lines (Historical Chart)</h3>
+                    <p class="settings-hint">Add horizontal reference lines to the historical chart. Drag lines on the chart to adjust values.</p>
+                    
+                    <!-- Reference Line 1 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine1Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 1
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Label">Label:</label>
+                                <input type="text" id="refLine1Label" class="setting-input-sm" value="High Level" placeholder="e.g., High Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Value">Value (dB):</label>
+                                <input type="number" id="refLine1Value" class="setting-input-sm" value="-10" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine1Color">Color:</label>
+                                <input type="color" id="refLine1Color" class="setting-input-color" value="#ef4444">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 2 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine2Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 2
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Label">Label:</label>
+                                <input type="text" id="refLine2Label" class="setting-input-sm" value="Target Level" placeholder="e.g., Target Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Value">Value (dB):</label>
+                                <input type="number" id="refLine2Value" class="setting-input-sm" value="-15" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine2Color">Color:</label>
+                                <input type="color" id="refLine2Color" class="setting-input-color" value="#f59e0b">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 3 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine3Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 3
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Label">Label:</label>
+                                <input type="text" id="refLine3Label" class="setting-input-sm" value="Low Level" placeholder="e.g., Low Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Value">Value (dB):</label>
+                                <input type="number" id="refLine3Value" class="setting-input-sm" value="-20" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine3Color">Color:</label>
+                                <input type="color" id="refLine3Color" class="setting-input-color" value="#10b981">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Line 4 -->
+                    <div class="reference-line-config">
+                        <div class="reference-line-header">
+                            <label class="setting-label">
+                                <input type="checkbox" id="refLine4Enabled" class="ref-line-checkbox" checked>
+                                Reference Line 4
+                            </label>
+                        </div>
+                        <div class="setting-group-inline">
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Label">Label:</label>
+                                <input type="text" id="refLine4Label" class="setting-input-sm" value="Critical Level" placeholder="e.g., Critical Level">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Value">Value (dB):</label>
+                                <input type="number" id="refLine4Value" class="setting-input-sm" value="-25" step="0.5">
+                            </div>
+                            <div class="setting-group-item">
+                                <label class="setting-label-sm" for="refLine4Color">Color:</label>
+                                <input type="color" id="refLine4Color" class="setting-input-color" value="#8b5cf6">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="updateRefLinesBtn">💾 Update Reference Lines</button>
+                </div>
+                
+                <!-- DRC Configuration Settings -->
+                <div class="settings-section">
+                    <h3>🎯 DRC Calibration Settings</h3>
+                    <p class="settings-hint">Configure linear mapping between S21 RMS (dB) and DRC percentage. Batch ID will be auto-generated.</p>
+                    
+                    <div class="setting-group">
+                        <label class="setting-label">Batch ID:</label>
+                        <div class="setting-input" id="drcNextBatchId" style="background: #f3f4f6; cursor: not-allowed; color: #6b7280;">
+                            Auto-generated on save
+                        </div>
+                        <small class="setting-hint">Format: yymmddhhmmss (timestamp)</small>
+                    </div>
+                    
+                    <div class="drc-calibration-points">
+                        <!-- Lower Calibration Point -->
+                        <div class="calibration-point">
+                            <h4>📉 Lower Calibration Point</h4>
+                            <div class="setting-group-inline">
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="s21LowDb">S21 Low (dB):</label>
+                                    <input type="number" id="s21LowDb" class="setting-input-sm" step="0.1" value="-90" required>
+                                </div>
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="drc1Percent">DRC1 (%):</label>
+                                    <input type="number" id="drc1Percent" class="setting-input-sm" step="0.1" min="0" max="100" value="0" required>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Upper Calibration Point -->
+                        <div class="calibration-point">
+                            <h4>📈 Upper Calibration Point</h4>
+                            <div class="setting-group-inline">
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="s21HighDb">S21 High (dB):</label>
+                                    <input type="number" id="s21HighDb" class="setting-input-sm" step="0.1" value="-70" required>
+                                </div>
+                                <div class="setting-group-item">
+                                    <label class="setting-label-sm" for="drc2Percent">DRC2 (%):</label>
+                                    <input type="number" id="drc2Percent" class="setting-input-sm" step="0.1" min="0" max="100" value="100" required>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-primary" id="saveDrcSettingsBtn">💾 Save DRC Settings</button>
+                    <button class="btn btn-secondary" id="loadDrcSettingsBtn">📥 Load Latest Settings</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analysis Page -->
+        <div class="page" id="analysisPage">
+            <div class="content-card">
+                <h2>📋 Dataset Preparation for Model Training</h2>
+                <p style="color: #6b7280; margin-bottom: 20px;">Prepare and manage training dataset from database measurements</p>
+                
+                <!-- Load Options -->
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                    <label style="font-weight: 600; margin-bottom: 10px; display: block;">Load Data Mode:</label>
+                    <div style="display: flex; gap: 20px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" name="loadMode" value="complete" id="loadModeComplete" checked 
+                                   style="margin-right: 8px; cursor: pointer;">
+                            <span>
+                                <strong>Complete Records Only</strong> 
+                                <div style="font-size: 0.85em; color: #6b7280;">Load fully filled records ready for training</div>
+                            </span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" name="loadMode" value="for_input" id="loadModeForInput" 
+                                   style="margin-right: 8px; cursor: pointer;">
+                            <span>
+                                <strong>Records for Input</strong>
+                                <div style="font-size: 0.85em; color: #6b7280;">Load records with S21 data, allow manual input</div>
+                            </span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" name="loadMode" value="all" id="loadModeAll" 
+                                   style="margin-right: 8px; cursor: pointer;">
+                            <span>
+                                <strong>All Records</strong>
+                                <div style="font-size: 0.85em; color: #6b7280;">Load all records including incomplete</div>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="analysis-controls" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <button class="btn btn-primary" id="loadDatasetBtn">📥 Load from Database</button>
+                    <button class="btn btn-warning" id="clearDatasetBtn">🗑️ Clear All</button>
+                    <button class="btn btn-success" id="exportDatasetBtn">📤 Export CSV</button>
+                    <div style="margin-left: auto;">
+                        <span id="datasetStatus" style="color: #6b7280;">Ready</span>
+                    </div>
+                </div>
+                
+                <!-- Dataset Table -->
+                <div class="data-table-wrapper" style="max-height: 500px; overflow-y: auto;">
+                    <table class="data-table" id="datasetTable">
+                        <thead style="position: sticky; top: 0; background: white; z-index: 10;">
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 100px;">Slip No.</th>
+                                <th style="width: 100px;">Sampling No.</th>
+                                <th style="width: 90px;">Weight-Gross (g)</th>
+                                <th style="width: 90px;">Weight-Net (g)</th>
+                                <th style="width: 80px;">Factor</th>
+                                <th style="width: 100px;">DRC (%)</th>
+                                <th style="width: 90px;">S21 Avg (dB)</th>
+                                <th style="width: 120px;">Timestamp</th>
+                                <th style="width: 80px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="datasetTableBody">
+                            <tr class="no-data">
+                                <td colspan="10" style="text-align: center; padding: 40px; color: #9ca3af;">
+                                    No data loaded. Click "Load from Database" or "Add Row" to start.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Dataset Statistics -->
+                <div class="analysis-section" style="margin-top: 20px;">
+                    <h3>📈 Dataset Statistics</h3>
+                    <div class="summary-grid">
+                        <div class="summary-card">
+                            <div class="summary-label">Total Records</div>
+                            <div class="summary-value" id="datasetTotalRecords">0</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Complete Records</div>
+                            <div class="summary-value" id="datasetCompleteRecords">0</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Avg DRC-Evaluate</div>
+                            <div class="summary-value" id="datasetAvgDrcEval">--</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="summary-label">Avg S21</div>
+                            <div class="summary-value" id="datasetAvgS21">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="dataPage">
+            <div class="content-card">
+                <h2>Data View</h2>
+                <div class="data-table-wrapper">
+                    <table class="data-table" id="dataTable">
+                        <thead>
+                            <tr>
+                                <th>Frequency (GHz)</th>
+                                <th>Magnitude</th>
+                                <th>dB</th>
+                                <th>Phase (°)</th>
+                                <th>Real</th>
+                                <th>Imaginary</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody">
+                            <tr>
+                                <td colspan="6" class="no-data">No data available</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data View Page -->
+        <div class="page" id="dataviewPage">
+            <div class="content-card">
+                <h2 class="page-title">📋 Saved Measurements - 101 Data Points View</h2>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Query Saved Measurements</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label>Date Range:</label>
+                                <input type="datetime-local" id="dataViewStartDate" class="filter-input">
+                                <span>to</span>
+                                <input type="datetime-local" id="dataViewEndDate" class="filter-input">
+                            </div>
+                            <div class="filter-group">
+                                <label>Limit:</label>
+                                <select id="dataViewLimitRecords" class="filter-select">
+                                    <option value="10">10 records</option>
+                                    <option value="50" selected>50 records</option>
+                                    <option value="100">100 records</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" id="queryDataViewBtn" onclick="queryDataView()">🔍 Query Saved Data</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Saved Measurements</h3>
+                        <span id="dataViewRecordCount" class="record-count">0 records</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="dataViewLoadingMsg" class="loading-message" style="display: none;">Loading...</div>
+                        <div id="dataViewErrorMsg" class="error-message" style="display: none;"></div>
+                        <div class="table-container">
+                            <table id="dataViewTable" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Batch ID</th>
+                                        <th>DRC (%)</th>
+                                        <th>S11 RMS (dB)</th>
+                                        <th>S21 RMS (dB)</th>
+                                        <th>Signal Quality</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dataViewTableBody">
+                                    <tr>
+                                        <td colspan="7" class="no-data">No data available. Query database to load records.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detail View Modal -->
+                <div id="detailModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 90%; max-height: 90vh; overflow: auto;">
+                        <div class="modal-header">
+                            <h3 id="detailModalTitle">101-Point Data View</h3>
+                            <button class="btn-close" onclick="closeDetailModal()">✕</button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="detailChartContainer" style="margin-bottom: 20px;">
+                                <canvas id="detailChart" style="max-height: 300px;"></canvas>
+                            </div>
+                            <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Frequency (GHz)</th>
+                                            <th>S11 dB</th>
+                                            <th>S11 Phase (°)</th>
+                                            <th>S21 dB</th>
+                                            <th>S21 Phase (°)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="detailTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Historical Data Page -->
+        <div class="page" id="historyPage">
+            <div class="content-card">
+                <h2 class="page-title">📊 Historical Data from Database</h2>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Query Filters</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label>Date Range:</label>
+                                <input type="datetime-local" id="startDate" class="filter-input">
+                                <span>to</span>
+                                <input type="datetime-local" id="endDate" class="filter-input">
+                            </div>
+                            <div class="filter-group">
+                                <label>Limit:</label>
+                                <select id="limitRecords" class="filter-select">
+                                    <option value="50">50 records</option>
+                                    <option value="100" selected>100 records</option>
+                                    <option value="500">500 records</option>
+                                    <option value="1000">1000 records</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-primary" id="queryDataBtn" onclick="queryHistoricalData()">🔍 Query Data</button>
+                            <button class="btn btn-secondary" id="exportCsvBtn" onclick="exportToCsv()">📥 Export CSV</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Results</h3>
+                        <span id="recordCount" class="record-count">0 records</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="historyLoadingMsg" class="loading-message" style="display: none;">
+                            ⏳ Loading data...
+                        </div>
+                        <div id="historyErrorMsg" class="error-message" style="display: none;"></div>
+                        <div class="table-container">
+                            <table id="historyTable" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Timestamp</th>
+                                        <th>Sweep #</th>
+                                        <th>Batch ID</th>
+                                        <th>S11 RMS (dB)</th>
+                                        <th>S11 Min (dB)</th>
+                                        <th>S11 Max (dB)</th>
+                                        <th>S21 RMS (dB)</th>
+                                        <th>S21 Min (dB)</th>
+                                        <th>S21 Max (dB)</th>
+                                        <th>DRC (%)</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historyTableBody">
+                                    <tr>
+                                        <td colspan="11" class="no-data">No data available. Query database to load records.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Models Page -->
+        <div class="page" id="modelsPage">
+            <div class="content-card">
+                <h2>🤖 Trained Models Management</h2>
+                <p style="color: #6b7280; margin-bottom: 20px;">View and manage trained DRC prediction models with performance metrics</p>
+                
+                <!-- Action Bar -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 15px; background: #f9fafb; border-radius: 8px;">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <button class="btn btn-primary" id="refreshModelsBtn">🔄 Refresh List</button>
+                        
+                        <!-- Model Type Selection -->
+                        <select id="drcModelSelect" class="setting-input-sm" 
+                                style="padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.9em; background: white;">
+                            <option value="linear_regression" selected>Linear Regression</option>
+                            <option value="polynomial" disabled>Polynomial (Coming Soon)</option>
+                            <option value="exponential" disabled>Exponential (Coming Soon)</option>
+                        </select>
+                        
+                        <button class="btn btn-success" id="trainModelBtn">🎓 Train New Model</button>
+                    </div>
+                    <div style="color: #6b7280; font-size: 0.9em;">
+                        <span id="modelsCount">0</span> models available
+                    </div>
+                </div>
+                
+                <!-- Filter and Sort -->
+                <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+                    <div style="flex: 1;">
+                        <label style="font-weight: 600; margin-bottom: 5px; display: block; font-size: 0.9em;">Filter by Type:</label>
+                        <select id="modelTypeFilter" class="setting-input-sm" style="width: 100%;">
+                            <option value="all">All Types</option>
+                            <option value="linear_regression">Linear Regression</option>
+                            <option value="polynomial">Polynomial</option>
+                            <option value="svr">Support Vector Regression</option>
+                            <option value="random_forest">Random Forest</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label style="font-weight: 600; margin-bottom: 5px; display: block; font-size: 0.9em;">Sort by:</label>
+                        <select id="modelSortBy" class="setting-input-sm" style="width: 100%;">
+                            <option value="created_desc">Newest First</option>
+                            <option value="created_asc">Oldest First</option>
+                            <option value="r_squared_desc">Best R² Score</option>
+                            <option value="rmse_asc">Lowest RMSE</option>
+                            <option value="name_asc">Name (A-Z)</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label style="font-weight: 600; margin-bottom: 5px; display: block; font-size: 0.9em;">Status:</label>
+                        <select id="modelStatusFilter" class="setting-input-sm" style="width: 100%;">
+                            <option value="all">All Models</option>
+                            <option value="active">Active Only</option>
+                            <option value="inactive">Inactive Only</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Models Grid -->
+                <div id="modelsGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; margin-top: 20px;">
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 60px; color: #9ca3af;">
+                        <div style="font-size: 3em; margin-bottom: 15px;">🤖</div>
+                        <div style="font-size: 1.1em; margin-bottom: 10px;">No models found</div>
+                        <div style="font-size: 0.9em;">Train a model from the Analysis page to get started</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Details Modal -->
+        <div id="modelDetailModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">
+            <div style="background: white; border-radius: 12px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+                <div style="padding: 20px; border-bottom: 2px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                    <h3 id="modelDetailTitle" style="margin: 0; font-size: 1.5em; color: #1f2937;">Model Details</h3>
+                    <button onclick="closeModelDetailModal()" style="background: none; border: none; font-size: 1.5em; cursor: pointer; color: #6b7280; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">×</button>
+                </div>
+                
+                <div style="padding: 20px;">
+                    <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                            <div>
+                                <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">Model Name</div>
+                                <div id="modalModelName" style="font-weight: 600;">--</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">Model Type</div>
+                                <div id="modalModelType" style="font-weight: 600;">--</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">Created At</div>
+                                <div id="modalCreatedAt" style="font-weight: 600;">--</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 0.75em; color: #6b7280; margin-bottom: 4px;">Training Samples</div>
+                                <div id="modalTrainingCount" style="font-weight: 600;">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h4 style="margin-bottom: 15px; color: #1f2937;">📊 Performance Metrics</h4>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+                        <div style="background: #dbeafe; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.75em; color: #1e40af; margin-bottom: 5px; font-weight: 600;">R² Score</div>
+                            <div id="modalRSquared" style="font-size: 1.8em; font-weight: bold; color: #1e40af;">--</div>
+                            <div style="font-size: 0.7em; color: #3b82f6; margin-top: 3px;">Coefficient of Determination</div>
+                        </div>
+                        <div style="background: #fef3c7; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.75em; color: #92400e; margin-bottom: 5px; font-weight: 600;">RMSE</div>
+                            <div id="modalRMSE" style="font-size: 1.8em; font-weight: bold; color: #92400e;">--</div>
+                            <div style="font-size: 0.7em; color: #d97706; margin-top: 3px;">Root Mean Square Error</div>
+                        </div>
+                        <div style="background: #d1fae5; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 0.75em; color: #065f46; margin-bottom: 5px; font-weight: 600;">MAE</div>
+                            <div id="modalMAE" style="font-size: 1.8em; font-weight: bold; color: #065f46;">--</div>
+                            <div style="font-size: 0.7em; color: #10b981; margin-top: 3px;">Mean Absolute Error</div>
+                        </div>
+                    </div>
+                    
+                    <h4 style="margin-bottom: 15px; color: #1f2937;">⚙️ Model Parameters</h4>
+                    <div id="modalParameters" style="background: #f3f4f6; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.9em; white-space: pre-wrap; margin-bottom: 20px;">--</div>
+                    
+                    <h4 style="margin-bottom: 15px; color: #1f2937;">📐 Formula</h4>
+                    <div id="modalFormula" style="background: #ede9fe; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 1em; color: #5b21b6; text-align: center; margin-bottom: 20px;">--</div>
+                    
+                    <h4 style="margin-bottom: 15px; color: #1f2937;">📝 Notes</h4>
+                    <textarea id="modalNotes" style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9em; resize: vertical;" placeholder="Add notes about this model..."></textarea>
+                    
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button class="btn btn-primary" id="saveModelNotesBtn" style="flex: 1;">💾 Save Notes</button>
+                        <button class="btn btn-success" id="activateModelBtn" style="flex: 1;">✓ Set as Active</button>
+                        <button class="btn btn-warning" id="deactivateModelBtn" style="flex: 1;">⏸ Deactivate</button>
+                        <button class="btn btn-danger" id="deleteModelBtn" style="flex: 1;">🗑️ Delete</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}?v={{ range(1, 999999) | random }}"></script>
