@@ -2574,6 +2574,13 @@ socket.on('dataset_saved', (data) => {
         document.getElementById('datasetStatus').textContent = 'Saved successfully';
         showNotification(data.message || 'Dataset saved successfully', 'success');
         
+        // Reset all slip_no and sampling_no fields to prepare for new input
+        datasetRecords.forEach(record => {
+            record.slip_no = '';
+            record.sampling_no = '';
+        });
+        renderDatasetTable();
+        
         // Reload dataset to show updated status (complete/incomplete)
         setTimeout(() => {
             const currentMode = document.querySelector('input[name="loadMode"]:checked')?.value || 'for_input';
