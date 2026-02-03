@@ -535,48 +535,6 @@
 
         <!-- Analysis Page -->
         <div class="page" id="analysisPage">
-            <!-- DRC CREP Section -->
-            <div class="content-card" style="margin-bottom: 20px;">
-                <h2>⚖️ DRC CREP - Weight Data Management</h2>
-                <p style="color: #6b7280; margin-bottom: 15px;">Manage weight data per batch (Slip + Sample). S11/S21 values are averaged from measurements.</p>
-                
-                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                    <button class="btn btn-primary" id="loadCrepDataBtn">🔄 Refresh Data</button>
-                    <button class="btn btn-success" id="addCrepRowBtn">➕ Add New Record</button>
-                    <button class="btn btn-warning" id="exportCrepBtn">📤 Export CSV</button>
-                    <div style="margin-left: auto; color: #6b7280;">
-                        <span id="crepRecordCount">0</span> records
-                    </div>
-                </div>
-                
-                <div class="data-table-wrapper" style="max-height: 400px; overflow-y: auto;">
-                    <table class="data-table" id="crepTable">
-                        <thead style="position: sticky; top: 0; background: white; z-index: 10;">
-                            <tr>
-                                <th style="width: 40px;">#</th>
-                                <th style="width: 120px;">Slip No.</th>
-                                <th style="width: 120px;">Sampling No.</th>
-                                <th style="width: 110px;">Weight Gross (g)</th>
-                                <th style="width: 110px;">Weight Net (g)</th>
-                                <th style="width: 100px;">Factor</th>
-                                <th style="width: 100px;">S11 Avg (dB)</th>
-                                <th style="width: 100px;">S21 Avg (dB)</th>
-                                <th style="width: 80px;">Measurements</th>
-                                <th style="width: 140px;">Last Updated</th>
-                                <th style="width: 100px;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="crepTableBody">
-                            <tr class="no-data">
-                                <td colspan="11" style="text-align: center; padding: 40px; color: #9ca3af;">
-                                    No data available. Click "Refresh Data" or "Add New Record" to start.
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            
             <div class="content-card">
                 <h2>📋 Dataset Preparation for Model Training</h2>
                 <p style="color: #6b7280; margin-bottom: 20px;">Prepare and manage training dataset from database measurements</p>
