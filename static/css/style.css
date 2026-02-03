@@ -1872,3 +1872,78 @@ body {
 .modal-body {
     padding: 20px;
 }
+
+/* Array Modal Styles */
+.array-modal {
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.array-modal h3 {
+    margin-bottom: 10px;
+    color: var(--primary-color);
+}
+
+.array-modal p {
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+}
+
+.array-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 13px;
+}
+
+.array-table thead {
+    background: var(--light-bg);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.array-table th,
+.array-table td {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.array-table th {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.array-table tbody tr:hover {
+    background-color: rgba(37, 99, 235, 0.05);
+}
+
+.s11-array-cell,
+.s21-array-cell {
+    text-align: center;
+}
+
+.array-count {
+    display: inline-block;
+    margin-right: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.btn-secondary {
+    background-color: var(--text-secondary);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: all 0.3s;
+}
+
+.btn-secondary:hover {
+    background-color: var(--text-primary);
+}

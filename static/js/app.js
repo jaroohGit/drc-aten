@@ -1425,10 +1425,13 @@ socket.on('historical_data_result', (result) => {
         
         if (result.data && result.data.length > 0) {
             tableBody.innerHTML = '';
-            result.data.forEach(row => {
+            window.historicalDataCache = result.data; // Cache for export
+            result.data.forEach((row, index) => {
                 const tr = document.createElement('tr');
                 const timestamp = new Date(row.timestamp).toLocaleString();
                 const drcDisplay = row.drc_percent !== null ? row.drc_percent : '--';
+                const s11Count = row.s11_data ? row.s11_data.length : 0;
+                const s21Count = row.s21_data ? row.s21_data.length : 0;
                 
                 tr.innerHTML = `
                     <td>${timestamp}</td>
@@ -1441,6 +1444,14 @@ socket.on('historical_data_result', (result) => {
                     <td>${row.s21_min}</td>
                     <td>${row.s21_max}</td>
                     <td>${drcDisplay}</td>
+                    <td class="s11-array-cell" title="Click to view ${s11Count} values">
+                        <span class="array-count">${s11Count} values</span>
+                        <button class="btn-small btn-view" onclick="viewArrayData(${index}, 's11')" title="View S11 Data">📊</button>
+                    </td>
+                    <td class="s21-array-cell" title="Click to view ${s21Count} values">
+                        <span class="array-count">${s21Count} values</span>
+                        <button class="btn-small btn-view" onclick="viewArrayData(${index}, 's21')" title="View S21 Data">📊</button>
+                    </td>
                     <td>
                         <button class="btn-small btn-view" onclick="viewDetails('${row.timestamp}')" title="View Details">👁️</button>
                     </td>
@@ -1448,7 +1459,7 @@ socket.on('historical_data_result', (result) => {
                 tableBody.appendChild(tr);
             });
         } else {
-            tableBody.innerHTML = '<tr><td colspan="11" class="no-data">No records found for the selected criteria.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="13" class="no-data">No records found for the selected criteria.</td></tr>';
         }
     } else {
         errorMsg.textContent = '❌ ' + result.message;
@@ -1458,43 +1469,131 @@ socket.on('historical_data_result', (result) => {
     }
 });
 
-function exportToCsv() {
-    const table = document.getElementById('historyTable');
-    const rows = table.querySelectorAll('tr');
+function viewArrayData(index, type) {
+    if (!window.historicalDataCache || !window.historicalDataCache[index]) {
+        alert('Data not available');
+        return;
+    }
     
-    if (rows.length <= 1) {
+    const row = window.historicalDataCache[index];
+    const data = type === 's11' ? row.s11_data : row.s21_data;
+    const timestamp = new Date(row.timestamp).toLocaleString();
+    
+    if (!data || data.length === 0) {
+        alert('No data available');
+        return;
+    }
+    
+    // Create modal content
+    let content = `<div class="array-modal">
+        <h3>${type.toUpperCase()} Data - ${timestamp}</h3>
+        <p>Sweep Count: ${row.sweep_count}</p>
+        <table class="array-table">
+            <thead>
+                <tr>
+                    <th>Index</th>
+                    <th>Value (dB)</th>
+                </tr>
+            </thead>
+            <tbody>`;
+    
+    data.forEach((value, i) => {
+        content += `<tr><td>${i + 1}</td><td>${value}</td></tr>`;
+    });
+    
+    content += `</tbody></table>
+        <button onclick="exportArrayToCsv(${index}, '${type}')" class="btn-primary">📥 Export to CSV</button>
+        <button onclick="closeArrayModal()" class="btn-secondary">Close</button>
+    </div>`;
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.id = 'arrayModal';
+    modal.className = 'modal';
+    modal.innerHTML = `<div class="modal-content">${content}</div>`;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+}
+
+function closeArrayModal() {
+    const modal = document.getElementById('arrayModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+function exportArrayToCsv(index, type) {
+    if (!window.historicalDataCache || !window.historicalDataCache[index]) {
+        alert('Data not available');
+        return;
+    }
+    
+    const row = window.historicalDataCache[index];
+    const data = type === 's11' ? row.s11_data : row.s21_data;
+    const timestamp = new Date(row.timestamp).toISOString().replace(/[:.]/g, '-');
+    
+    let csv = `Index,${type.toUpperCase()} (dB)\n`;
+    data.forEach((value, i) => {
+        csv += `${i + 1},${value}\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${type}_data_${timestamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+function exportToCsv() {
+    if (!window.historicalDataCache || window.historicalDataCache.length === 0) {
         alert('No data to export');
         return;
     }
     
-    let csv = [];
+    const data = window.historicalDataCache;
     
-    // Get headers
-    const headers = [];
-    rows[0].querySelectorAll('th').forEach(th => {
-        if (th.textContent !== 'Actions') {
-            headers.push(th.textContent);
-        }
-    });
-    csv.push(headers.join(','));
+    // Build CSV with headers
+    let csv = 'Timestamp,Sweep Count,Batch ID,S11 RMS,S11 Min,S11 Max,S21 RMS,S21 Min,S21 Max,DRC %';
     
-    // Get data rows
-    for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        const cells = row.querySelectorAll('td');
-        
-        if (cells.length > 1) {
-            const rowData = [];
-            for (let j = 0; j < cells.length - 1; j++) {
-                rowData.push(`"${cells[j].textContent}"`);
-            }
-            csv.push(rowData.join(','));
-        }
+    // Add S11 columns (101 values)
+    for (let i = 1; i <= 101; i++) {
+        csv += `,S11_${i}`;
     }
     
+    // Add S21 columns (101 values)
+    for (let i = 1; i <= 101; i++) {
+        csv += `,S21_${i}`;
+    }
+    csv += '\n';
+    
+    // Add data rows
+    data.forEach(row => {
+        const timestamp = new Date(row.timestamp).toLocaleString();
+        const drcDisplay = row.drc_percent !== null ? row.drc_percent : '';
+        
+        let rowData = `"${timestamp}",${row.sweep_count},"${row.batch_id}",${row.s11_rms},${row.s11_min},${row.s11_max},${row.s21_rms},${row.s21_min},${row.s21_max},${drcDisplay}`;
+        
+        // Add S11 data (pad with empty if less than 101)
+        const s11Data = row.s11_data || [];
+        for (let i = 0; i < 101; i++) {
+            rowData += `,${s11Data[i] !== undefined ? s11Data[i] : ''}`;
+        }
+        
+        // Add S21 data (pad with empty if less than 101)
+        const s21Data = row.s21_data || [];
+        for (let i = 0; i < 101; i++) {
+            rowData += `,${s21Data[i] !== undefined ? s21Data[i] : ''}`;
+        }
+        
+        csv += rowData + '\n';
+    });
+    
     // Download
-    const csvContent = csv.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

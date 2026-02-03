@@ -1486,19 +1486,22 @@ def handle_query_historical_data(params):
         # Build query
         query = """
             SELECT 
-                time,
-                sweep_count,
-                s11_rms,
-                s11_min,
-                s11_max,
-                s21_rms,
-                s21_min,
-                s21_max,
-                batch_id,
-                slip_no,
-                sampling_no,
-                test_no
-            FROM measurement_summary
+                ms.time,
+                ms.sweep_count,
+                ms.s11_rms,
+                ms.s11_min,
+                ms.s11_max,
+                ms.s21_rms,
+                ms.s21_min,
+                ms.s21_max,
+                ms.batch_id,
+                ms.slip_no,
+                ms.sampling_no,
+                ms.test_no,
+                array_agg(m.s11_db ORDER BY m.frequency) as s11_data,
+                array_agg(m.s21_db ORDER BY m.frequency) as s21_data
+            FROM measurement_summary ms
+            LEFT JOIN measurements m ON ms.time = m.time AND ms.sweep_count = m.sweep_count
         """
         
         conditions = []
@@ -1545,7 +1548,9 @@ def handle_query_historical_data(params):
                 'batch_id': row[8] if row[8] else 'N/A',
                 'slip_no': row[9] if row[9] else 'N/A',
                 'sampling_no': row[10] if row[10] else 'N/A',
-                'test_no': row[11] if row[11] else 'N/A'
+                'test_no': row[11] if row[11] else 'N/A',
+                's11_data': [round(v, 2) for v in row[12]] if row[12] else [],
+                's21_data': [round(v, 2) for v in row[13]] if row[13] else []
             }
             
             # Calculate DRC if settings available
