@@ -1444,22 +1444,14 @@ socket.on('historical_data_result', (result) => {
                     <td>${row.s21_min}</td>
                     <td>${row.s21_max}</td>
                     <td>${drcDisplay}</td>
-                    <td class="s11-array-cell" title="Click to view ${s11Count} values">
-                        <span class="array-count">${s11Count} values</span>
-                        <button class="btn-small btn-view" onclick="viewArrayData(${index}, 's11')" title="View S11 Data">📊</button>
-                    </td>
-                    <td class="s21-array-cell" title="Click to view ${s21Count} values">
-                        <span class="array-count">${s21Count} values</span>
-                        <button class="btn-small btn-view" onclick="viewArrayData(${index}, 's21')" title="View S21 Data">📊</button>
-                    </td>
-                    <td>
-                        <button class="btn-small btn-view" onclick="viewDetails('${row.timestamp}')" title="View Details">👁️</button>
+                    <td style="text-align: center;">
+                        <button class="btn-small btn-view" onclick="viewRecordDetails(${index})" title="View S11/S21 Data (${s11Count}/${s21Count} points)">📊 Details</button>
                     </td>
                 `;
                 tableBody.appendChild(tr);
             });
         } else {
-            tableBody.innerHTML = '<tr><td colspan="13" class="no-data">No records found for the selected criteria.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="11" class="no-data">No records found for the selected criteria.</td></tr>';
         }
     } else {
         errorMsg.textContent = '❌ ' + result.message;
@@ -1469,50 +1461,167 @@ socket.on('historical_data_result', (result) => {
     }
 });
 
-function viewArrayData(index, type) {
+function viewRecordDetails(index) {
     if (!window.historicalDataCache || !window.historicalDataCache[index]) {
         alert('Data not available');
         return;
     }
     
     const row = window.historicalDataCache[index];
-    const data = type === 's11' ? row.s11_data : row.s21_data;
     const timestamp = new Date(row.timestamp).toLocaleString();
+    const s11Data = row.s11_data || [];
+    const s21Data = row.s21_data || [];
     
-    if (!data || data.length === 0) {
-        alert('No data available');
-        return;
-    }
-    
-    // Create modal content
+    // Create modal with tabs
     let content = `<div class="array-modal">
-        <h3>${type.toUpperCase()} Data - ${timestamp}</h3>
-        <p>Sweep Count: ${row.sweep_count}</p>
-        <table class="array-table">
-            <thead>
-                <tr>
-                    <th>Index</th>
-                    <th>Value (dB)</th>
-                </tr>
-            </thead>
-            <tbody>`;
-    
-    data.forEach((value, i) => {
-        content += `<tr><td>${i + 1}</td><td>${value}</td></tr>`;
-    });
-    
-    content += `</tbody></table>
-        <button onclick="exportArrayToCsv(${index}, '${type}')" class="btn-primary">📥 Export to CSV</button>
-        <button onclick="closeArrayModal()" class="btn-secondary">Close</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div>
+                <h3 style="margin: 0; margin-bottom: 5px;">Measurement Details</h3>
+                <p style="margin: 0; color: #6b7280; font-size: 0.9em;">${timestamp} • Sweep #${row.sweep_count} • ${row.batch_id}</p>
+            </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px;">
+            <div style="padding: 12px; background: #f0f9ff; border-radius: 6px; border-left: 3px solid #3b82f6;">
+                <div style="font-size: 0.8em; color: #6b7280; margin-bottom: 3px;">S11 RMS</div>
+                <div style="font-size: 1.2em; font-weight: 600; color: #1e40af;">${row.s11_rms} dB</div>
+            </div>
+            <div style="padding: 12px; background: #f0fdf4; border-radius: 6px; border-left: 3px solid #10b981;">
+                <div style="font-size: 0.8em; color: #6b7280; margin-bottom: 3px;">S21 RMS</div>
+                <div style="font-size: 1.2em; font-weight: 600; color: #065f46;">${row.s21_rms} dB</div>
+            </div>
+            <div style="padding: 12px; background: #fef3c7; border-radius: 6px; border-left: 3px solid #f59e0b;">
+                <div style="font-size: 0.8em; color: #6b7280; margin-bottom: 3px;">DRC</div>
+                <div style="font-size: 1.2em; font-weight: 600; color: #92400e;">${row.drc_percent || '--'} %</div>
+            </div>
+        </div>
+        
+        <div class="tab-container" style="margin-bottom: 15px;">
+            <button class="tab-btn active" onclick="switchDataTab(${index}, 's11')" id="tab-s11">S11 Data (${s11Data.length} pts)</button>
+            <button class="tab-btn" onclick="switchDataTab(${index}, 's21')" id="tab-s21">S21 Data (${s21Data.length} pts)</button>
+        </div>
+        
+        <div id="data-content-${index}" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px;">
+            ${renderDataTable(s11Data, 's11')}
+        </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 15px; justify-content: flex-end;">
+            <button onclick="exportRecordData(${index}, 's11')" class="btn-primary" id="export-s11-btn">📥 Export S11</button>
+            <button onclick="exportRecordData(${index}, 's21')" class="btn-primary" id="export-s21-btn" style="display: none;">📥 Export S21</button>
+            <button onclick="exportRecordData(${index}, 'both')" class="btn-primary">📥 Export Both</button>
+            <button onclick="closeArrayModal()" class="btn-secondary">Close</button>
+        </div>
     </div>`;
     
     // Create modal
     const modal = document.createElement('div');
     modal.id = 'arrayModal';
     modal.className = 'modal';
-    modal.innerHTML = `<div class="modal-content">${content}</div>`;
+    modal.innerHTML = `<div class="modal-content" style="max-width: 700px;">${content}</div>`;
     document.body.appendChild(modal);
-    modal.style.display = 'block';
+    modal.style.display = 'flex';
+    
+    // Store current index for tab switching
+    window.currentRecordIndex = index;
+}
+
+function renderDataTable(data, type) {
+    if (!data || data.length === 0) {
+        return '<div style="padding: 40px; text-align: center; color: #9ca3af;">No data available</div>';
+    }
+    
+    let html = `<table class="array-table" style="width: 100%; margin: 0;">
+        <thead style="position: sticky; top: 0; background: #f9fafb;">
+            <tr>
+                <th style="padding: 10px; text-align: center;">Index</th>
+                <th style="padding: 10px; text-align: right;">${type.toUpperCase()} (dB)</th>
+            </tr>
+        </thead>
+        <tbody>`;
+    
+    data.forEach((value, i) => {
+        html += `<tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 8px; text-align: center; color: #6b7280;">${i + 1}</td>
+            <td style="padding: 8px; text-align: right; font-family: monospace;">${value}</td>
+        </tr>`;
+    });
+    
+    html += '</tbody></table>';
+    return html;
+}
+
+function switchDataTab(index, type) {
+    if (!window.historicalDataCache || !window.historicalDataCache[index]) return;
+    
+    const row = window.historicalDataCache[index];
+    const data = type === 's11' ? row.s11_data : row.s21_data;
+    const content = document.getElementById(`data-content-${index}`);
+    
+    if (content) {
+        content.innerHTML = renderDataTable(data, type);
+    }
+    
+    // Update tab buttons
+    document.getElementById('tab-s11').classList.toggle('active', type === 's11');
+    document.getElementById('tab-s21').classList.toggle('active', type === 's21');
+    
+    // Update export buttons
+    document.getElementById('export-s11-btn').style.display = type === 's11' ? 'inline-block' : 'none';
+    document.getElementById('export-s21-btn').style.display = type === 's21' ? 'inline-block' : 'none';
+}
+
+function exportRecordData(index, type) {
+    if (!window.historicalDataCache || !window.historicalDataCache[index]) {
+        alert('Data not available');
+        return;
+    }
+    
+    const row = window.historicalDataCache[index];
+    const timestamp = new Date(row.timestamp).toISOString().replace(/[:.]/g, '-');
+    
+    if (type === 'both') {
+        // Export both S11 and S21 in one file
+        const s11Data = row.s11_data || [];
+        const s21Data = row.s21_data || [];
+        const maxLen = Math.max(s11Data.length, s21Data.length);
+        
+        let csv = `Index,S11 (dB),S21 (dB)\n`;
+        for (let i = 0; i < maxLen; i++) {
+            csv += `${i + 1},${s11Data[i] !== undefined ? s11Data[i] : ''},${s21Data[i] !== undefined ? s21Data[i] : ''}\n`;
+        }
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `measurement_data_${timestamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } else {
+        // Export single dataset
+        const data = type === 's11' ? row.s11_data : row.s21_data;
+        let csv = `Index,${type.toUpperCase()} (dB)\n`;
+        data.forEach((value, i) => {
+            csv += `${i + 1},${value}\n`;
+        });
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${type}_data_${timestamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }
+}
+
+function viewArrayData(index, type) {
+    // Backward compatibility - redirect to new function
+    viewRecordDetails(index);
 }
 
 function closeArrayModal() {

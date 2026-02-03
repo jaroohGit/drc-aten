@@ -1947,3 +1947,44 @@ body {
 .btn-secondary:hover {
     background-color: var(--text-primary);
 }
+
+/* Tab Styles for Modal */
+.tab-container {
+    display: flex;
+    gap: 5px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-weight: 500;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s;
+    font-size: 0.95em;
+}
+
+.tab-btn:hover {
+    color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.tab-btn.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.modal {
+    display: none;
+}
+
+.modal.show,
+.modal[style*="display: flex"] {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+}
