@@ -2742,6 +2742,97 @@ def handle_load_dataset(params):
         })
 
 
+@socketio.on('save_dataset')
+def handle_save_dataset(data):
+    """Save dataset records to batch_weights table"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('dataset_saved', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        db_conn.rollback()
+        
+        records = data.get('records', [])
+        
+        if not records:
+            emit('dataset_saved', {
+                'success': False,
+                'message': 'No records to save'
+            })
+            return
+        
+        cursor = db_conn.cursor()
+        saved_count = 0
+        updated_count = 0
+        
+        for record in records:
+            slip_no = record.get('slip_no')
+            sampling_no = record.get('sampling_no')
+            weight_gross = record.get('weight_gross')
+            weight_net = record.get('weight_net')
+            factor = record.get('factor')
+            drc_percent = record.get('drc_percent')
+            
+            # Skip if missing required fields
+            if not slip_no or not sampling_no:
+                continue
+            
+            # Calculate DRC if weight data available but DRC missing
+            if weight_gross and weight_net and factor and not drc_percent:
+                try:
+                    drc_percent = round((float(weight_net) * float(factor)) / float(weight_gross) * 100, 2)
+                except:
+                    pass
+            
+            # Insert or update in batch_weights
+            cursor.execute("""
+                INSERT INTO batch_weights 
+                (slip_no, sampling_no, weight_gross, weight_net, factor, drc_percent, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (slip_no, sampling_no) 
+                DO UPDATE SET 
+                    weight_gross = EXCLUDED.weight_gross,
+                    weight_net = EXCLUDED.weight_net,
+                    factor = EXCLUDED.factor,
+                    drc_percent = EXCLUDED.drc_percent,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING (xmax = 0) AS inserted
+            """, (slip_no, sampling_no, weight_gross, weight_net, factor, drc_percent))
+            
+            result = cursor.fetchone()
+            if result and result[0]:
+                saved_count += 1
+            else:
+                updated_count += 1
+        
+        db_conn.commit()
+        cursor.close()
+        
+        total = saved_count + updated_count
+        message = f'Saved {total} records ({saved_count} new, {updated_count} updated)'
+        
+        emit('dataset_saved', {
+            'success': True,
+            'message': message,
+            'saved_count': saved_count,
+            'updated_count': updated_count,
+            'total': total
+        })
+        
+    except Exception as e:
+        db_conn.rollback()
+        print(f"Save dataset error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('dataset_saved', {
+            'success': False,
+            'message': f'Save error: {str(e)}'
+        })
+
+
 @socketio.on('save_single_record')
 def handle_save_single_record(data):
     """Save or update a single record in measurement_summary"""

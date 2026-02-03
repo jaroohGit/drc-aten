@@ -2573,6 +2573,12 @@ socket.on('dataset_saved', (data) => {
     if (data.success) {
         document.getElementById('datasetStatus').textContent = 'Saved successfully';
         showNotification(data.message || 'Dataset saved successfully', 'success');
+        
+        // Reload dataset to show updated status (complete/incomplete)
+        setTimeout(() => {
+            const currentMode = document.querySelector('input[name="loadMode"]:checked')?.value || 'for_input';
+            socket.emit('load_dataset', { mode: currentMode });
+        }, 500);
     } else {
         document.getElementById('datasetStatus').textContent = 'Save failed';
         showNotification(data.message || 'Failed to save dataset', 'error');
