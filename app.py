@@ -2407,33 +2407,11 @@ def handle_load_dataset(params):
         cursor = db_conn.cursor()
         mode = params.get('mode', 'complete')
         
-        # Build query based on mode - using batch_weights JOIN with measurement_summary
+        # Build query based on mode - load from measurement_summary first
         if mode == 'complete':
             # Load only records with all required fields
             query = """
-                SELECT DISTINCT
-                    bw.slip_no,
-                    bw.sampling_no,
-                    bw.weight_gross,
-                    bw.weight_net,
-                    bw.factor,
-                    bw.drc_percent,
-                    ms.s21_rms as s21_avg,
-                    ms.time as timestamp
-                FROM batch_weights bw
-                INNER JOIN measurement_summary ms ON bw.slip_no = ms.slip_no AND bw.sampling_no = ms.sampling_no
-                WHERE bw.weight_gross IS NOT NULL 
-                  AND bw.weight_net IS NOT NULL 
-                  AND bw.factor IS NOT NULL
-                  AND bw.drc_percent IS NOT NULL
-                  AND ms.s21_rms IS NOT NULL
-                ORDER BY ms.time DESC
-                LIMIT 200
-            """
-        elif mode == 'for_input':
-            # Load records with S21 data but missing weight fields
-            query = """
-                SELECT DISTINCT
+                SELECT 
                     ms.slip_no,
                     ms.sampling_no,
                     bw.weight_gross,
@@ -2443,19 +2421,25 @@ def handle_load_dataset(params):
                     ms.s21_rms as s21_avg,
                     ms.time as timestamp
                 FROM measurement_summary ms
-                LEFT JOIN batch_weights bw ON ms.slip_no = bw.slip_no AND ms.sampling_no = bw.sampling_no
-                WHERE ms.s21_rms IS NOT NULL
-                  AND ms.slip_no IS NOT NULL
+                INNER JOIN batch_weights bw ON 
+                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
+                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
+                WHERE ms.slip_no IS NOT NULL 
                   AND ms.sampling_no IS NOT NULL
-                  AND (bw.weight_gross IS NULL OR bw.weight_net IS NULL OR bw.factor IS NULL)
+                  AND bw.weight_gross IS NOT NULL 
+                  AND bw.weight_net IS NOT NULL 
+                  AND bw.factor IS NOT NULL
+                  AND bw.drc_percent IS NOT NULL
+                  AND ms.s21_rms IS NOT NULL
                 ORDER BY ms.time DESC
                 LIMIT 200
             """
-        else:  # all
+        elif mode == 'for_input':
+            # Load records with S21 data but missing weight fields (for manual input)
             query = """
-                SELECT DISTINCT
-                    COALESCE(bw.slip_no, ms.slip_no) as slip_no,
-                    COALESCE(bw.sampling_no, ms.sampling_no) as sampling_no,
+                SELECT 
+                    ms.slip_no,
+                    ms.sampling_no,
                     bw.weight_gross,
                     bw.weight_net,
                     bw.factor,
@@ -2463,16 +2447,42 @@ def handle_load_dataset(params):
                     ms.s21_rms as s21_avg,
                     ms.time as timestamp
                 FROM measurement_summary ms
-                FULL OUTER JOIN batch_weights bw ON ms.slip_no = bw.slip_no AND ms.sampling_no = bw.sampling_no
-                WHERE COALESCE(bw.slip_no, ms.slip_no) IS NOT NULL
-                  AND COALESCE(bw.sampling_no, ms.sampling_no) IS NOT NULL
-                ORDER BY ms.time DESC NULLS LAST
+                LEFT JOIN batch_weights bw ON 
+                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
+                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
+                WHERE ms.slip_no IS NOT NULL 
+                  AND ms.sampling_no IS NOT NULL
+                  AND ms.s21_rms IS NOT NULL
+                  AND (bw.weight_gross IS NULL OR bw.weight_net IS NULL OR bw.factor IS NULL)
+                ORDER BY ms.time DESC
+                LIMIT 200
+            """
+        else:  # all - แสดงทุก record ที่มี measurement
+            query = """
+                SELECT 
+                    ms.slip_no,
+                    ms.sampling_no,
+                    bw.weight_gross,
+                    bw.weight_net,
+                    bw.factor,
+                    bw.drc_percent,
+                    ms.s21_rms as s21_avg,
+                    ms.time as timestamp
+                FROM measurement_summary ms
+                LEFT JOIN batch_weights bw ON 
+                    COALESCE(ms.slip_no, '') = COALESCE(bw.slip_no, '')
+                    AND COALESCE(ms.sampling_no, '') = COALESCE(bw.sampling_no, '')
+                WHERE ms.slip_no IS NOT NULL 
+                  AND ms.sampling_no IS NOT NULL
+                ORDER BY ms.time DESC
                 LIMIT 200
             """
         
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
+        
+        print(f"✓ Loaded {len(rows)} records from database (mode: {mode})")
         
         # Format results
         records = []
@@ -2495,6 +2505,8 @@ def handle_load_dataset(params):
                 's21_avg': round(row[6], 2) if row[6] else None,
                 'timestamp': row[7].isoformat() if row[7] else None
             })
+        
+        print(f"✓ Formatted {len(records)} records for client")
         
         emit('dataset_loaded', {
             'success': True,
