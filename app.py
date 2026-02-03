@@ -338,6 +338,29 @@ def init_database():
         """)
         print("  ✓ Batch items table created")
         
+        # Create drc_crep table for DRC weight data per batch
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS drc_crep (
+                id SERIAL PRIMARY KEY,
+                slip_no VARCHAR(50) NOT NULL,
+                sampling_no VARCHAR(50) NOT NULL,
+                weight_gross NUMERIC(10, 3),
+                weight_net NUMERIC(10, 3),
+                factor NUMERIC(10, 6),
+                s11_avg NUMERIC(10, 3),
+                s21_avg NUMERIC(10, 3),
+                measurement_count INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (slip_no, sampling_no)
+            );
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_drc_crep_slip_sampling 
+            ON drc_crep (slip_no, sampling_no);
+        """)
+        print("  ✓ DRC CREP table created")
+        
         db_conn.commit()
         cursor.close()
         print("✓ Database initialized successfully (PostgreSQL)")
@@ -2194,6 +2217,209 @@ def handle_load_batch_items(params):
             'success': False,
             'message': f'Load error: {str(e)}'
         })
+
+
+# ==================== DRC CREP Management ====================
+
+@socketio.on('load_crep_data')
+def handle_load_crep_data():
+    """Load all DRC CREP records with averaged S11/S21 from measurements"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('crep_data_loaded', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        cursor = db_conn.cursor()
+        
+        # Get CREP data with averaged measurements
+        cursor.execute("""
+            SELECT 
+                c.id,
+                c.slip_no,
+                c.sampling_no,
+                c.weight_gross,
+                c.weight_net,
+                c.factor,
+                c.updated_at,
+                COALESCE(AVG(ms.s11_rms), 0) as s11_avg,
+                COALESCE(AVG(ms.s21_rms), 0) as s21_avg,
+                COUNT(ms.time) as measurement_count
+            FROM drc_crep c
+            LEFT JOIN measurement_summary ms ON 
+                COALESCE(c.slip_no, '') = COALESCE(ms.slip_no, '')
+                AND COALESCE(c.sampling_no, '') = COALESCE(ms.sampling_no, '')
+            GROUP BY c.id, c.slip_no, c.sampling_no, c.weight_gross, c.weight_net, c.factor, c.updated_at
+            ORDER BY c.updated_at DESC
+        """)
+        
+        rows = cursor.fetchall()
+        
+        # Update cached averages in drc_crep table
+        for row in rows:
+            cursor.execute("""
+                UPDATE drc_crep 
+                SET s11_avg = %s, s21_avg = %s, measurement_count = %s
+                WHERE id = %s
+            """, (row[7], row[8], row[9], row[0]))
+        
+        db_conn.commit()
+        
+        records = []
+        for row in rows:
+            records.append({
+                'id': row[0],
+                'slip_no': row[1],
+                'sampling_no': row[2],
+                'weight_gross': float(row[3]) if row[3] else None,
+                'weight_net': float(row[4]) if row[4] else None,
+                'factor': float(row[5]) if row[5] else None,
+                'updated_at': row[6].isoformat() if row[6] else None,
+                's11_avg': round(float(row[7]), 3) if row[7] else 0,
+                's21_avg': round(float(row[8]), 3) if row[8] else 0,
+                'measurement_count': row[9]
+            })
+        
+        cursor.close()
+        
+        emit('crep_data_loaded', {
+            'success': True,
+            'data': records,
+            'count': len(records)
+        })
+        
+    except Exception as e:
+        print(f"Load CREP data error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('crep_data_loaded', {
+            'success': False,
+            'message': f'Load error: {str(e)}'
+        })
+
+
+@socketio.on('save_crep_record')
+def handle_save_crep_record(data):
+    """Save or update DRC CREP record"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('crep_save_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        record_id = data.get('id')
+        slip_no = data.get('slip_no', '').strip()
+        sampling_no = data.get('sampling_no', '').strip()
+        weight_gross = data.get('weight_gross')
+        weight_net = data.get('weight_net')
+        factor = data.get('factor')
+        
+        if not slip_no or not sampling_no:
+            emit('crep_save_result', {
+                'success': False,
+                'message': 'Slip No. and Sampling No. are required'
+            })
+            return
+        
+        cursor = db_conn.cursor()
+        
+        if record_id:
+            # Update existing record
+            cursor.execute("""
+                UPDATE drc_crep 
+                SET weight_gross = %s, weight_net = %s, factor = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (weight_gross, weight_net, factor, record_id))
+            message = 'Record updated successfully'
+        else:
+            # Insert new record
+            cursor.execute("""
+                INSERT INTO drc_crep (slip_no, sampling_no, weight_gross, weight_net, factor)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (slip_no, sampling_no) 
+                DO UPDATE SET 
+                    weight_gross = EXCLUDED.weight_gross,
+                    weight_net = EXCLUDED.weight_net,
+                    factor = EXCLUDED.factor,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (slip_no, sampling_no, weight_gross, weight_net, factor))
+            message = 'Record saved successfully'
+        
+        db_conn.commit()
+        cursor.close()
+        
+        emit('crep_save_result', {
+            'success': True,
+            'message': message
+        })
+        
+        # Reload data to get updated averages
+        handle_load_crep_data()
+        
+    except Exception as e:
+        db_conn.rollback()
+        print(f"Save CREP record error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('crep_save_result', {
+            'success': False,
+            'message': f'Save error: {str(e)}'
+        })
+
+
+@socketio.on('delete_crep_record')
+def handle_delete_crep_record(data):
+    """Delete DRC CREP record"""
+    if not DB_AVAILABLE or not db_conn:
+        emit('crep_delete_result', {
+            'success': False,
+            'message': 'Database not available'
+        })
+        return
+    
+    try:
+        record_id = data.get('id')
+        
+        if not record_id:
+            emit('crep_delete_result', {
+                'success': False,
+                'message': 'Record ID is required'
+            })
+            return
+        
+        cursor = db_conn.cursor()
+        
+        cursor.execute("""
+            DELETE FROM drc_crep WHERE id = %s
+        """, (record_id,))
+        
+        db_conn.commit()
+        cursor.close()
+        
+        emit('crep_delete_result', {
+            'success': True,
+            'message': 'Record deleted successfully'
+        })
+        
+        # Reload data
+        handle_load_crep_data()
+        
+    except Exception as e:
+        db_conn.rollback()
+        print(f"Delete CREP record error: {e}")
+        import traceback
+        traceback.print_exc()
+        emit('crep_delete_result', {
+            'success': False,
+            'message': f'Delete error: {str(e)}'
+        })
+
+
+# ==================== Model Training ====================
 
 
 @socketio.on('get_batch_with_items')

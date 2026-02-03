@@ -3184,3 +3184,166 @@ document.getElementById('deleteModelBtn')?.addEventListener('click', () => {
 setTimeout(() => {
     loadTrainedModels();
 }, 2000);
+
+// ==================== DRC CREP Management ====================
+
+let crepData = [];
+
+// Load CREP data
+function loadCrepData() {
+    socket.emit('load_crep_data');
+}
+
+socket.on('crep_data_loaded', (result) => {
+    if (result.success) {
+        crepData = result.data || [];
+        renderCrepTable();
+        document.getElementById('crepRecordCount').textContent = crepData.length;
+    } else {
+        showNotification(`Failed to load CREP data: ${result.message}`, 'error');
+    }
+});
+
+function renderCrepTable() {
+    const tbody = document.getElementById('crepTableBody');
+    
+    if (!crepData || crepData.length === 0) {
+        tbody.innerHTML = `<tr class="no-data">
+            <td colspan="11" style="text-align: center; padding: 40px; color: #9ca3af;">
+                No data available. Click "Refresh Data" or "Add New Record" to start.
+            </td>
+        </tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = crepData.map((record, index) => {
+        const updatedDate = record.updated_at ? new Date(record.updated_at).toLocaleString() : '--';
+        
+        return `<tr>
+            <td style="text-align: center;">${index + 1}</td>
+            <td><input type="text" class="table-input" value="${record.slip_no}" 
+                onchange="updateCrepField(${record.id}, 'slip_no', this.value)" 
+                ${record.id ? 'disabled' : ''}></td>
+            <td><input type="text" class="table-input" value="${record.sampling_no}" 
+                onchange="updateCrepField(${record.id}, 'sampling_no', this.value)"
+                ${record.id ? 'disabled' : ''}></td>
+            <td><input type="number" class="table-input" step="0.001" 
+                value="${record.weight_gross || ''}" 
+                onchange="updateCrepField(${record.id}, 'weight_gross', this.value)"></td>
+            <td><input type="number" class="table-input" step="0.001" 
+                value="${record.weight_net || ''}" 
+                onchange="updateCrepField(${record.id}, 'weight_net', this.value)"></td>
+            <td><input type="number" class="table-input" step="0.000001" 
+                value="${record.factor || ''}" 
+                onchange="updateCrepField(${record.id}, 'factor', this.value)"></td>
+            <td style="text-align: right; font-weight: 500; color: #1e40af;">${record.s11_avg}</td>
+            <td style="text-align: right; font-weight: 500; color: #065f46;">${record.s21_avg}</td>
+            <td style="text-align: center; color: #6b7280;">${record.measurement_count}</td>
+            <td style="font-size: 0.8em; color: #6b7280;">${updatedDate}</td>
+            <td style="text-align: center;">
+                <button class="btn-small" style="background: #10b981; color: white;" 
+                    onclick="saveCrepRecord(${record.id})" title="Save">💾</button>
+                <button class="btn-small" style="background: #ef4444; color: white;" 
+                    onclick="deleteCrepRecord(${record.id})" title="Delete">🗑️</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function updateCrepField(id, field, value) {
+    const record = crepData.find(r => r.id === id);
+    if (record) {
+        record[field] = value;
+    }
+}
+
+function saveCrepRecord(id) {
+    const record = crepData.find(r => r.id === id);
+    if (!record) return;
+    
+    if (!record.slip_no || !record.sampling_no) {
+        showNotification('Slip No. and Sampling No. are required', 'error');
+        return;
+    }
+    
+    socket.emit('save_crep_record', {
+        id: record.id,
+        slip_no: record.slip_no,
+        sampling_no: record.sampling_no,
+        weight_gross: parseFloat(record.weight_gross) || null,
+        weight_net: parseFloat(record.weight_net) || null,
+        factor: parseFloat(record.factor) || null
+    });
+}
+
+socket.on('crep_save_result', (result) => {
+    if (result.success) {
+        showNotification(result.message, 'success');
+    } else {
+        showNotification(`Save failed: ${result.message}`, 'error');
+    }
+});
+
+function deleteCrepRecord(id) {
+    if (!confirm('Are you sure you want to delete this record?')) return;
+    
+    socket.emit('delete_crep_record', { id: id });
+}
+
+socket.on('crep_delete_result', (result) => {
+    if (result.success) {
+        showNotification('Record deleted', 'success');
+    } else {
+        showNotification(`Delete failed: ${result.message}`, 'error');
+    }
+});
+
+function addCrepRow() {
+    const newRecord = {
+        id: null,
+        slip_no: '',
+        sampling_no: '',
+        weight_gross: null,
+        weight_net: null,
+        factor: null,
+        s11_avg: 0,
+        s21_avg: 0,
+        measurement_count: 0,
+        updated_at: null
+    };
+    
+    crepData.unshift(newRecord);
+    renderCrepTable();
+}
+
+function exportCrepToCsv() {
+    if (!crepData || crepData.length === 0) {
+        alert('No data to export');
+        return;
+    }
+    
+    let csv = 'Slip No,Sampling No,Weight Gross (g),Weight Net (g),Factor,S11 Avg (dB),S21 Avg (dB),Measurements,Last Updated\n';
+    
+    crepData.forEach(record => {
+        const updatedDate = record.updated_at ? new Date(record.updated_at).toLocaleString() : '';
+        csv += `"${record.slip_no}","${record.sampling_no}",${record.weight_gross || ''},${record.weight_net || ''},${record.factor || ''},${record.s11_avg},${record.s21_avg},${record.measurement_count},"${updatedDate}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `drc_crep_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+}
+
+// Event listeners
+document.getElementById('loadCrepDataBtn')?.addEventListener('click', loadCrepData);
+document.getElementById('addCrepRowBtn')?.addEventListener('click', addCrepRow);
+document.getElementById('exportCrepBtn')?.addEventListener('click', exportCrepToCsv);
+
+// Load CREP data when Analysis page is shown
+setTimeout(() => {
+    loadCrepData();
+}, 2500);
