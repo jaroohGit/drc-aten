@@ -1501,24 +1501,31 @@ def handle_query_historical_data(params):
                 array_agg(m.s11_db ORDER BY m.frequency) as s11_data,
                 array_agg(m.s21_db ORDER BY m.frequency) as s21_data
             FROM measurement_summary ms
-            LEFT JOIN measurements m ON ms.time = m.time AND ms.sweep_count = m.sweep_count
+            LEFT JOIN measurements m ON 
+                ms.time = m.time 
+                AND ms.sweep_count = m.sweep_count 
+                AND COALESCE(ms.batch_id, '') = COALESCE(m.batch_id, '')
+                AND COALESCE(ms.slip_no, '') = COALESCE(m.slip_no, '')
+                AND COALESCE(ms.sampling_no, '') = COALESCE(m.sampling_no, '')
+                AND COALESCE(ms.test_no, '') = COALESCE(m.test_no, '')
         """
         
         conditions = []
         query_params = []
         
         if start_date:
-            conditions.append("time >= %s")
+            conditions.append("ms.time >= %s")
             query_params.append(start_date)
         
         if end_date:
-            conditions.append("time <= %s")
+            conditions.append("ms.time <= %s")
             query_params.append(end_date)
         
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         
-        query += " ORDER BY time DESC LIMIT %s"
+        query += " GROUP BY ms.time, ms.sweep_count, ms.s11_rms, ms.s11_min, ms.s11_max, ms.s21_rms, ms.s21_min, ms.s21_max, ms.batch_id, ms.slip_no, ms.sampling_no, ms.test_no"
+        query += " ORDER BY ms.time DESC LIMIT %s"
         query_params.append(limit)
         
         cursor.execute(query, query_params)
